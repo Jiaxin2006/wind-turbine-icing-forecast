@@ -1,0 +1,12 @@
+pandas
+numpy
+torch
+fastai
+tsai
+scikit-learn
+scipy
+matplotlib
+seaborn
+joblib
+tqdm
+openpyxl
