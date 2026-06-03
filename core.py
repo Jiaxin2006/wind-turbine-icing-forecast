@@ -128,6 +128,32 @@ class SeqDataset(Dataset):
         return seq, y
 
 
+class SeqDatasetWithIdx(Dataset):
+    """SeqDataset 的变体，额外返回 label 所在的全局行号（用于 embedding/聚类分析中的对齐）。
+
+    每个样本返回 (seq, y, label_idx)，其中 label_idx 是 df_full 中目标行的整数索引。
+    """
+
+    def __init__(self, df_full, start_idx, end_idx, seq_len, feat_cols, target_col="OT"):
+        self.df = df_full
+        self.start = start_idx
+        self.end = end_idx
+        self.seq_len = seq_len
+        self.feat_cols = feat_cols
+        self.target_col = target_col
+        self.n = max(0, (self.end - self.start + 1) - self.seq_len)
+
+    def __len__(self):
+        return self.n
+
+    def __getitem__(self, idx):
+        idx0 = self.start + idx
+        seq = self.df.iloc[idx0: idx0 + self.seq_len][self.feat_cols].values.astype(np.float32)
+        label_idx = idx0 + self.seq_len
+        y = self.df.iloc[label_idx][self.target_col].astype(np.float32)
+        return seq, y, int(label_idx)
+
+
 class LSTMReg(nn.Module):
     def __init__(self, input_dim, hid=64, n_layers=2, dropout=0.1):
         super().__init__()

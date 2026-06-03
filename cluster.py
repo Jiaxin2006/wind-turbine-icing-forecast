@@ -8,7 +8,9 @@ from sklearn.metrics import confusion_matrix
 sns.set(style="whitegrid")
 
 OUT_DIR = "out_cnn_lstm_cluster_1"
-CSV_PATH = os.path.join(OUT_DIR, "emb_cluster_vs_ot_temp.csv")
+# full_clustering_analysis.csv is produced by cluster_show.py and contains the same
+# columns (OT_true, exog_temp, emb_cluster) previously written by the deleted test.py
+CSV_PATH = os.path.join(OUT_DIR, "full_clustering_analysis.csv")
 EMB_PATHS = [os.path.join(OUT_DIR, "test_embeddings.npy"),
              os.path.join(OUT_DIR, "embeddings.npy"),
              os.path.join(OUT_DIR, "embeddings_test.npy")]
