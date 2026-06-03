@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# wind_ot_script_b_full_temp_wind.py
-# Full pipeline: temp+wind features only, SVR gridsearch (TimeSeriesSplit), NN seq models (CNN/LSTM/Transformer),
-# stacking meta-learner (RidgeCV), NNLS weighted ensemble, embeddings + clustering outputs.
-# Outputs saved to OUT_DIR.
+"""
+主实验：仅用温度/风速特征预测 OT。
+基模型 RF + SVR(网格搜索) + CNN/LSTM/Transformer，再做 RidgeCV stacking 和 NNLS 加权集成，
+最后抽取序列模型 embedding 做 PCA+KMeans 聚类。结果保存到 OUT_DIR。
+"""
 
-import os
 import math
 import random
 from pathlib import Path
@@ -30,14 +30,13 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-# ---------------- CONFIG ----------------
 SEED = 42
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 OUT_DIR = Path("output_ot_full_temp_wind")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-KEEP_EXOG_LAGS = True      # whether to include lagged exog features
-LAGS = [1,2,3,6,12]          # lags in number of rows (your sampling is 1 min -> these are minutes)
+KEEP_EXOG_LAGS = True        # 是否加入温度/风速的滞后特征
+LAGS = [1,2,3,6,12]          # 滞后步数（采样间隔 1 分钟，即对应分钟）
 ROLL_WINDOW = 3
 VAL_RATIO = 0.10
 TEST_RATIO = 0.20
@@ -47,11 +46,10 @@ EPOCHS_NN = 40
 EPOCHS_CNN_TUNE = 24
 LR = 5e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-PRINT_EVERY = 1
 
 sns.set(style="whitegrid")
 
-# ---------------- utilities ----------------
+
 def mape(true, pred):
     true = np.array(true).ravel(); pred = np.array(pred).ravel()
     eps = 1e-9
@@ -64,12 +62,11 @@ def metrics_dict(y_true, y_pred):
     rmse = math.sqrt(mse)
     return {"MAE": mae, "MSE": mse, "RMSE": rmse, "MAPE(%)": mape(y_true, y_pred)}
 
-# ---------------- read data & basic mapping ----------------
+# 读取数据并把中文列名映射为内部名
 print("Reading data...")
 data_path = "标注的数据-#67_1.xlsx"
 df = pd.read_excel(data_path)
 
-# If your CSV column names are Chinese, map them here.
 col_map = {
     'time': '统计时间',
     'OT': 'OT',
@@ -86,17 +83,15 @@ if 'time' in df.columns:
 else:
     raise ValueError("time column not found; update col_map mapping")
 
-# require columns
 required = ['OT','exog_temp','exog_wind']
 for c in required:
     if c not in df.columns:
         raise ValueError(f"Missing required column: {c}")
     df[c] = pd.to_numeric(df[c], errors='coerce')
 
-# interpolate & fill small gaps
-df = df.interpolate(limit=5).fillna(method='bfill').fillna(method='ffill')
+df = df.interpolate(limit=5).bfill().ffill()
 
-# ---------------- feature engineering (temp & wind only) ----------------
+# 特征工程：仅温度/风速的滚动均值与滞后
 df['temp_roll_3'] = df['exog_temp'].rolling(ROLL_WINDOW, min_periods=1).mean()
 df['wind_roll_3'] = df['exog_wind'].rolling(ROLL_WINDOW, min_periods=1).mean()
 
@@ -109,7 +104,7 @@ for lag in LAGS:
 df = df.dropna().reset_index(drop=True)
 print(f"Rows after feature engineering: {len(df)}")
 
-# ---------------- splits: train / val / test (time-aware) ----------------
+# 按时间顺序切分 train/val/test，避免未来信息泄露
 n = len(df)
 test_size = int(n * TEST_RATIO)
 val_size = int(n * VAL_RATIO)
@@ -122,20 +117,20 @@ val_df   = df.iloc[train_size: train_size + val_size].reset_index(drop=True)
 test_df  = df.iloc[train_size + val_size : ].reset_index(drop=True)
 print(f"Train / Val / Test sizes: {len(train_df)} / {len(val_df)} / {len(test_df)}")
 
-# inside-train split for meta generation (oof): train_train + meta_holdout
+# 在 train 内部再切 train_train + meta_holdout，用于生成 stacking 的 meta 数据
 train_train_end = int(len(train_df) * 0.8)
 train_train_df = train_df.iloc[:train_train_end].reset_index(drop=True)
 meta_holdout_df = train_df.iloc[train_train_end:].reset_index(drop=True)
 print(f"train_train / meta_holdout sizes: {len(train_train_df)} / {len(meta_holdout_df)}")
 
-# ---------------- feature lists ----------------
+# 经典模型用滚动+滞后特征；序列模型只用温度、风速
 feature_cols_classical = ['exog_temp','exog_wind','temp_roll_3','wind_roll_3'] + [f'OT_lag_{l}' for l in LAGS]
 if KEEP_EXOG_LAGS:
     feature_cols_classical += [f'temp_lag_{l}' for l in LAGS] + [f'wind_lag_{l}' for l in LAGS]
 
-feature_cols_seq = ['exog_temp','exog_wind']  # only exogenous for sequences
+feature_cols_seq = ['exog_temp','exog_wind']
 
-# ---------------- classical scalers & arrays ----------------
+# scaler 只在 train_train 上 fit，避免泄露
 scaler_cl = StandardScaler().fit(train_train_df[feature_cols_classical].values)
 X_train_cl = scaler_cl.transform(train_train_df[feature_cols_classical].values)
 y_train_tt = train_train_df['OT'].values
@@ -146,15 +141,16 @@ y_val = val_df['OT'].values
 X_test_cl = scaler_cl.transform(test_df[feature_cols_classical].values)
 y_test = test_df['OT'].values
 
-# ---------------- sequence scaling for NN (scale on train_train to avoid leakage) ----------------
+# 序列特征同样只在 train_train 上 fit scaler
 scaler_seq = StandardScaler().fit(train_train_df[feature_cols_seq].values)
 df_seq_scaled = df.copy()
 df_seq_scaled[feature_cols_seq] = scaler_seq.transform(df[feature_cols_seq].values)
 
-# ---------------- SeqDataset (returns seq, y) ----------------
+
 class SeqDataset(Dataset):
+    """滑窗序列：start_idx/end_idx 为闭区间，输入窗口后一步的 OT 为标签。"""
+
     def __init__(self, df_full, start_idx, end_idx, seq_len, feat_cols, target_col='OT'):
-        # start_idx/end_idx are inclusive indices into df_full
         self.df = df_full
         self.start = start_idx
         self.end = end_idx
@@ -171,13 +167,11 @@ class SeqDataset(Dataset):
         y = self.df.iloc[idx0 + self.seq_len][self.target_col].astype(np.float32)
         return seq, y
 
-# build seq loaders
+# train_train 用于训练基模型，meta_holdout 用作早停/选择的验证集
 train_train_seq_loader = DataLoader(SeqDataset(df_seq_scaled, 0, train_train_end-1, SEQ_LEN, feature_cols_seq), batch_size=BATCH_SIZE, shuffle=True)
 meta_seq_loader = DataLoader(SeqDataset(df_seq_scaled, train_train_end-1, train_size-1, SEQ_LEN, feature_cols_seq), batch_size=BATCH_SIZE, shuffle=False)
-val_seq_loader = DataLoader(SeqDataset(df_seq_scaled, train_size-1, train_size + val_size -1, SEQ_LEN, feature_cols_seq), batch_size=BATCH_SIZE, shuffle=False)
-test_seq_loader = DataLoader(SeqDataset(df_seq_scaled, train_size + val_size -1, n-1, SEQ_LEN, feature_cols_seq), batch_size=BATCH_SIZE, shuffle=False)
 
-# ---------------- classical models: RF and SVR (GridSearch on train_train) ----------------
+# 经典模型：RF 直接训练，SVR 用 TimeSeriesSplit 网格搜索
 print("\nTraining RandomForest on train_train...")
 rf_tt = RandomForestRegressor(n_estimators=200, random_state=SEED, n_jobs=-1)
 rf_tt.fit(X_train_cl, y_train_tt)
@@ -192,16 +186,15 @@ pd.DataFrame(grid.cv_results_).to_csv(OUT_DIR/'svr_grid_results.csv', index=Fals
 best_svr_pipe = grid.best_estimator_
 print("Best SVR params:", grid.best_params_)
 
-# Optionally retrain best_svr on train_train + meta_holdout + val for finalization
+# 用 train_train+meta_holdout+val 合并重训最佳 SVR
 X_combined = np.vstack([train_train_df[feature_cols_classical].values, meta_holdout_df[feature_cols_classical].values, val_df[feature_cols_classical].values])
 y_combined = np.concatenate([train_train_df['OT'].values, meta_holdout_df['OT'].values, val_df['OT'].values])
 best_svr_pipe.fit(X_combined, y_combined)
 
-# save classical base models (train_train-stage)
 joblib.dump(rf_tt, OUT_DIR/'rf_traintrain.joblib')
 joblib.dump(best_svr_pipe, OUT_DIR/'svr_best_traintrain.joblib')
 
-# ---------------- define NN models ----------------
+
 class LSTMReg(nn.Module):
     def __init__(self, input_dim, hid=64, n_layers=2, dropout=0.1):
         super().__init__()
@@ -324,7 +317,7 @@ def predict_torch(model, loader, device=DEVICE):
         return np.array([]), np.array([])
     return np.concatenate(trues), np.concatenate(preds)
 
-# ---------------- tune CNN on train_train (validate on meta_holdout) ----------------
+# CNN 小网格：在 train_train 上训练、meta_holdout 上选择
 print("\nTuning CNN on train_train (validate on meta_holdout)...")
 cnn_grid = [dict(hid=32,kernel=3,lr=1e-3), dict(hid=64,kernel=3,lr=1e-3), dict(hid=64,kernel=5,lr=5e-4)]
 best_cnn = None; best_mse = float('inf'); best_cfg = None
@@ -359,7 +352,7 @@ tr_model = train_torch_model(tr_model, train_train_seq_loader, val_loader=meta_s
 tr_final = TransformerReg(input_dim=len(feature_cols_seq), d_model=64)
 tr_final = train_torch_model(tr_final, combined_seq_loader, val_loader=None, epochs=EPOCHS_NN, device=DEVICE)
 
-# ---------------- build meta features on meta_holdout ----------------
+# 用各基模型在 meta_holdout 上的预测作为 stacking 的输入特征
 print("\nBuilding meta features on meta_holdout...")
 meta_df = meta_holdout_df.copy()
 # classical predictions using rf_tt & best_svr_pipe (trained on train_train earlier)
@@ -382,7 +375,7 @@ y_meta_vals = meta_df['OT'].values
 meta_learner = RidgeCV(alphas=[0.01,0.1,1.0,10.0]).fit(X_meta_feats, y_meta_vals)
 joblib.dump(meta_learner, OUT_DIR/'meta_learner_ridgecv.joblib')
 
-# ---------------- final re-fit base models on full training (train+val+meta_holdout) ----------------
+# 用全部训练数据重训基模型，得到最终预测
 print("\nRefitting base models on combined training set for final predictions...")
 X_all_train = np.vstack([train_train_df[feature_cols_classical].values, meta_holdout_df[feature_cols_classical].values, val_df[feature_cols_classical].values])
 y_all_train = np.concatenate([train_train_df['OT'].values, meta_holdout_df['OT'].values, val_df['OT'].values])
@@ -392,7 +385,7 @@ rf_final.fit(scaler_cl.transform(X_all_train), y_all_train)
 best_svr_pipe.fit(X_all_train, y_all_train)
 # final NN models (final_cnn, lstm_final, tr_final) already retrained on combined
 
-# ---------------- predict on test set ----------------
+# 测试集预测
 print("Predicting on test set...")
 pred_rf_test = rf_final.predict(scaler_cl.transform(test_df[feature_cols_classical].values))
 pred_svr_test = best_svr_pipe.predict(test_df[feature_cols_classical].values)
@@ -467,7 +460,7 @@ X_test_scaled = X_test_meta / col_std
 merged['OT_pred_Ensemble_nnls'] = X_test_scaled.dot(w)
 np.savetxt(OUT_DIR/'ensemble_weights_nnls.txt', w)
 
-# ---------------- metrics & saving ----------------
+# 汇总指标并保存预测、模型权重
 models_metrics = {}
 models_metrics['RandomForest'] = metrics_dict(merged['OT'].values, merged['pred_rf'].values)
 models_metrics['SVR'] = metrics_dict(merged['OT'].values, merged['pred_svr'].values)
@@ -485,7 +478,7 @@ torch.save(final_cnn.state_dict(), OUT_DIR/'cnn_final.pt')
 torch.save(lstm_final.state_dict(), OUT_DIR/'lstm_final.pt')
 torch.save(tr_final.state_dict(), OUT_DIR/'transformer_final.pt')
 
-# ---------------- embeddings: extract penultimate embedding for each NN over sliding windows (whole df) ----------------
+# 对全量数据滑窗，抽取每个序列模型倒数第二层的 embedding
 def extract_embeddings(model, df_scaled, feat_cols, seq_len, batch_size=BATCH_SIZE):
     model = model.to(DEVICE); model.eval()
     seqs = []
@@ -520,9 +513,8 @@ if emb_lstm is not None:
 if emb_tr is not None:
     emb_tr.to_csv(OUT_DIR/'embeddings_transformer.csv', index=False)
 
-# ---------------- clustering on inputs and embeddings (PCA+KMeans) ----------------
+# 对原始输入和各 embedding 分别做 PCA+KMeans
 print("PCA + KMeans on inputs and on embeddings (if available)...")
-# inputs
 X_inputs = df[['exog_temp','exog_wind']].values
 sc_inputs = StandardScaler().fit(X_inputs)
 Xp = sc_inputs.transform(X_inputs)
@@ -548,7 +540,7 @@ pca_kmeans_and_plot(emb_cnn, 'cnn')
 pca_kmeans_and_plot(emb_lstm, 'lstm')
 pca_kmeans_and_plot(emb_tr, 'transformer')
 
-# ---------------- final plots: true vs preds & model comparison ----------------
+# 真值 vs 预测、残差、各模型 MAE 对比图
 print("Saving final plots...")
 time_vals = merged['time']
 plt.figure(figsize=(12,4))
@@ -568,10 +560,6 @@ names = list(models_metrics.keys())
 maes = [models_metrics[n]['MAE'] for n in names]
 plt.bar(names, maes)
 plt.ylabel('MAE'); plt.title('Model comparison (MAE)'); plt.xticks(rotation=30); plt.tight_layout(); plt.savefig(OUT_DIR/'model_comparison_mae.png'); plt.close()
-
-# ---------------- save other artifacts ----------------
-pd.DataFrame(models_metrics).T.to_csv(OUT_DIR/'models_metrics_table.csv')
-pd.DataFrame(grid.cv_results_).to_csv(OUT_DIR/'svr_grid_results_full.csv', index=False)
 
 print("\nDone. Outputs saved to:", OUT_DIR)
 print("Final metrics:")
