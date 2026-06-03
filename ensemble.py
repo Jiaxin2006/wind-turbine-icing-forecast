@@ -5,7 +5,6 @@
 最后抽取序列模型 embedding 做 PCA+KMeans 聚类。结果保存到 OUT_DIR。
 """
 
-import math
 import random
 from pathlib import Path
 import numpy as np
@@ -13,22 +12,31 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
-from tqdm import tqdm
 
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import mean_squared_error
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.linear_model import RidgeCV
 from scipy.optimize import nnls
 
 import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
+
+from core import (
+    load_dataframe,
+    metrics_dict,
+    SeqDataset,
+    LSTMReg,
+    CNN1DReg,
+    TransformerReg,
+    train_torch_model,
+    predict_torch,
+)
 
 SEED = 42
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
@@ -49,47 +57,10 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 sns.set(style="whitegrid")
 
-
-def mape(true, pred):
-    true = np.array(true).ravel(); pred = np.array(pred).ravel()
-    eps = 1e-9
-    return np.mean(np.abs((true - pred) / (np.abs(true) + eps))) * 100.0
-
-def metrics_dict(y_true, y_pred):
-    y_true = np.array(y_true).ravel(); y_pred = np.array(y_pred).ravel()
-    mae = mean_absolute_error(y_true, y_pred)
-    mse = mean_squared_error(y_true, y_pred)
-    rmse = math.sqrt(mse)
-    return {"MAE": mae, "MSE": mse, "RMSE": rmse, "MAPE(%)": mape(y_true, y_pred)}
-
-# 读取数据并把中文列名映射为内部名
+# 读取数据（列名映射、排序、数值化、插值见 core.load_dataframe）
 print("Reading data...")
 data_path = "标注的数据-#67_1.xlsx"
-df = pd.read_excel(data_path)
-
-col_map = {
-    'time': '统计时间',
-    'OT': 'OT',
-    'exog_temp': 'Exogenous1',
-    'exog_wind': 'Exogenous2',
-    # optional, not required for this script: 'gen_speed': '平均发电机转速(rpm)', ...
-}
-reverse_map = {v:k for k,v in col_map.items()}
-df = df.rename(columns={orig: new for orig, new in reverse_map.items() if orig in df.columns})
-
-if 'time' in df.columns:
-    df['time'] = pd.to_datetime(df['time'])
-    df = df.sort_values('time').reset_index(drop=True)
-else:
-    raise ValueError("time column not found; update col_map mapping")
-
-required = ['OT','exog_temp','exog_wind']
-for c in required:
-    if c not in df.columns:
-        raise ValueError(f"Missing required column: {c}")
-    df[c] = pd.to_numeric(df[c], errors='coerce')
-
-df = df.interpolate(limit=5).bfill().ffill()
+df = load_dataframe(data_path, required=["OT", "exog_temp", "exog_wind"])
 
 # 特征工程：仅温度/风速的滚动均值与滞后
 df['temp_roll_3'] = df['exog_temp'].rolling(ROLL_WINDOW, min_periods=1).mean()
@@ -146,27 +117,7 @@ scaler_seq = StandardScaler().fit(train_train_df[feature_cols_seq].values)
 df_seq_scaled = df.copy()
 df_seq_scaled[feature_cols_seq] = scaler_seq.transform(df[feature_cols_seq].values)
 
-
-class SeqDataset(Dataset):
-    """滑窗序列：start_idx/end_idx 为闭区间，输入窗口后一步的 OT 为标签。"""
-
-    def __init__(self, df_full, start_idx, end_idx, seq_len, feat_cols, target_col='OT'):
-        self.df = df_full
-        self.start = start_idx
-        self.end = end_idx
-        self.seq_len = seq_len
-        self.feat_cols = feat_cols
-        self.target_col = target_col
-        # number of windows:
-        self.n = max(0, (self.end - self.start + 1) - self.seq_len)
-    def __len__(self):
-        return self.n
-    def __getitem__(self, idx):
-        idx0 = self.start + idx
-        seq = self.df.iloc[idx0: idx0 + self.seq_len][self.feat_cols].values.astype(np.float32)
-        y = self.df.iloc[idx0 + self.seq_len][self.target_col].astype(np.float32)
-        return seq, y
-
+# SeqDataset / 序列模型 / 训练循环均来自 core.py
 # train_train 用于训练基模型，meta_holdout 用作早停/选择的验证集
 train_train_seq_loader = DataLoader(SeqDataset(df_seq_scaled, 0, train_train_end-1, SEQ_LEN, feature_cols_seq), batch_size=BATCH_SIZE, shuffle=True)
 meta_seq_loader = DataLoader(SeqDataset(df_seq_scaled, train_train_end-1, train_size-1, SEQ_LEN, feature_cols_seq), batch_size=BATCH_SIZE, shuffle=False)
@@ -193,129 +144,6 @@ best_svr_pipe.fit(X_combined, y_combined)
 
 joblib.dump(rf_tt, OUT_DIR/'rf_traintrain.joblib')
 joblib.dump(best_svr_pipe, OUT_DIR/'svr_best_traintrain.joblib')
-
-
-class LSTMReg(nn.Module):
-    def __init__(self, input_dim, hid=64, n_layers=2, dropout=0.1):
-        super().__init__()
-        self.lstm = nn.LSTM(input_dim, hid, n_layers, batch_first=True, dropout=dropout)
-        self.fc1 = nn.Linear(hid, 32)
-        self.out = nn.Linear(32, 1)
-    def forward(self, x, return_embedding=False):
-        out, _ = self.lstm(x)
-        last = out[:, -1, :]
-        emb = torch.relu(self.fc1(last))
-        y = self.out(emb)
-        return (y, emb) if return_embedding else y
-
-class CNN1DReg(nn.Module):
-    def __init__(self, input_dim, hid=64, kernel_size=3):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv1d(input_dim, hid, kernel_size=kernel_size, padding=kernel_size//2),
-            nn.ReLU(),
-            nn.Conv1d(hid, hid, kernel_size=kernel_size, padding=kernel_size//2),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool1d(1)
-        )
-        self.fc1 = nn.Linear(hid, 32)
-        self.out = nn.Linear(32,1)
-    def forward(self, x, return_embedding=False):
-        x = x.permute(0,2,1)
-        h = self.conv(x).squeeze(-1)
-        emb = torch.relu(self.fc1(h))
-        y = self.out(emb)
-        return (y, emb) if return_embedding else y
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
-        super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        divterm = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(pos * divterm)
-        pe[:, 1::2] = torch.cos(pos * divterm)
-        pe = pe.unsqueeze(0)
-        self.register_buffer('pe', pe)
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1), :]
-
-class TransformerReg(nn.Module):
-    def __init__(self, input_dim, d_model=64, nhead=4, num_layers=2, dim_feedforward=128, dropout=0.1):
-        super().__init__()
-        self.input_fc = nn.Linear(input_dim, d_model)
-        self.pos_enc = PositionalEncoding(d_model)
-        encoder_layer = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers)
-        self.fc1 = nn.Linear(d_model, 32)
-        self.out = nn.Linear(32,1)
-    def forward(self, x, return_embedding=False):
-        x = self.input_fc(x)
-        x = self.pos_enc(x)
-        out = self.transformer(x)
-        last = out[:, -1, :]
-        emb = torch.relu(self.fc1(last))
-        y = self.out(emb)
-        return (y, emb) if return_embedding else y
-
-# training utils
-def train_torch_model(model, train_loader, val_loader=None, epochs=EPOCHS_NN, lr=LR, device=DEVICE, early_stopping=3):
-    model = model.to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.MSELoss()
-    best_state = None
-    best_loss = float('inf')
-    patience = 0
-    for ep in range(epochs):
-        model.train()
-        train_loss = 0.0
-        for xb, yb in train_loader:
-            xb = xb.to(device); yb = yb.to(device).unsqueeze(1)
-            opt.zero_grad()
-            out = model(xb)
-            if isinstance(out, tuple): out = out[0]
-            loss = criterion(out, yb)
-            loss.backward(); opt.step()
-            train_loss += loss.item() * xb.size(0)
-        train_loss /= max(1, len(train_loader.dataset))
-        val_loss = train_loss
-        if val_loader is not None:
-            model.eval()
-            vloss = 0.0
-            with torch.no_grad():
-                for xb, yb in val_loader:
-                    xb = xb.to(device); yb = yb.to(device).unsqueeze(1)
-                    out = model(xb)
-                    if isinstance(out, tuple): out = out[0]
-                    vloss += criterion(out, yb).item() * xb.size(0)
-            val_loss = vloss / max(1, len(val_loader.dataset))
-        if val_loss < best_loss - 1e-9:
-            best_loss = val_loss
-            best_state = {k:v.cpu().clone() for k,v in model.state_dict().items()}
-            patience = 0
-        else:
-            patience += 1
-            if patience >= early_stopping:
-                break
-    if best_state is not None:
-        model.load_state_dict(best_state)
-    return model
-
-def predict_torch(model, loader, device=DEVICE):
-    model = model.to(device)
-    model.eval()
-    preds = []
-    trues = []
-    with torch.no_grad():
-        for xb, yb in loader:
-            xb = xb.to(device)
-            out = model(xb)
-            if isinstance(out, tuple): out = out[0]
-            preds.append(out.cpu().numpy().ravel())
-            trues.append(yb.numpy().ravel())
-    if len(preds) == 0:
-        return np.array([]), np.array([])
-    return np.concatenate(trues), np.concatenate(preds)
 
 # CNN 小网格：在 train_train 上训练、meta_holdout 上选择
 print("\nTuning CNN on train_train (validate on meta_holdout)...")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# eval_emb_cluster_shutdown.py
+
 import os, json
 import numpy as np, pandas as pd
 import matplotlib.pyplot as plt, seaborn as sns
@@ -7,7 +7,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import confusion_matrix
 sns.set(style="whitegrid")
 
-OUT_DIR = "out_cnn_lstm_cluster_1"   # 根据你的路径修改
+OUT_DIR = "out_cnn_lstm_cluster_1"
 CSV_PATH = os.path.join(OUT_DIR, "emb_cluster_vs_ot_temp.csv")
 EMB_PATHS = [os.path.join(OUT_DIR, "test_embeddings.npy"),
              os.path.join(OUT_DIR, "embeddings.npy"),

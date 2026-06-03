@@ -19,19 +19,10 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-COL_MAP = {
-    "time": "统计时间",
-    "exog_temp": "Exogenous1",
-    "exog_wind": "Exogenous2",
-    "gen_speed": "平均发电机转速(rpm)",
-    "I_A": "平均网侧A相电流(A)",
-    "I_B": "平均网侧B相电流(A)",
-    "I_C": "平均网侧C相电流(A)",
-    "V_A": "平均网侧A相电压(V)",
-    "V_B": "平均网侧B相电压(V)",
-    "V_C": "平均网侧C相电压(V)",
-}
+from core import COL_MAP, load_dataframe
+
 POWER_PF = 0.95
+NUM_COLS = ["exog_temp", "exog_wind", "gen_speed", "I_A", "I_B", "I_C", "V_A", "V_B", "V_C"]
 FEATURE_COLS = ["exog_temp", "exog_wind", "temp_roll_3", "wind_roll_3"]
 TARGET_COLS = ["P_est_kW", "gen_speed"]
 TEST_RATIO = 0.20
@@ -40,30 +31,10 @@ RANDOM_STATE = 42
 
 
 def load_and_prepare(data_path: str) -> pd.DataFrame:
-    df = pd.read_excel(data_path)
-    df = df.rename(columns={v: k for k, v in COL_MAP.items() if v in df.columns})
+    # 数据读取/清洗复用 core.load_dataframe；这里只补充本脚本特有的特征
+    df = load_dataframe(data_path, required=NUM_COLS, numeric=NUM_COLS, col_map=COL_MAP)
 
-    if "time" not in df.columns:
-        raise ValueError("找不到时间列，请检查 COL_MAP 中 time 的映射。")
-
-    df["time"] = pd.to_datetime(df["time"])
-    df = df.sort_values("time").reset_index(drop=True)
-
-    num_cols = [
-        "exog_temp", "exog_wind", "gen_speed",
-        "I_A", "I_B", "I_C", "V_A", "V_B", "V_C",
-    ]
-    for col in num_cols:
-        if col not in df.columns:
-            raise ValueError(f"缺少列: {col}，请检查 COL_MAP")
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df = (
-        df.interpolate(limit=5)
-        .bfill()
-        .ffill()
-    )
-
+    # 近似有功功率：三相电压×电流之和乘以功率因数
     df["P_est_W"] = POWER_PF * (
         df["V_A"] * df["I_A"] + df["V_B"] * df["I_B"] + df["V_C"] * df["I_C"]
     )
