@@ -16,12 +16,21 @@ import math
 
 import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from torch.utils.data import Dataset
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# torch is optional; scripts that need NN models import it themselves
+try:
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import Dataset
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    _TORCH_AVAILABLE = True
+except ImportError:
+    _TORCH_AVAILABLE = False
+    DEVICE = None
+    # minimal stub so SeqDataset/SeqDatasetWithIdx type annotations don't crash
+    class Dataset:  # type: ignore[no-redef]
+        pass
 
 # Excel 原始列名 -> 脚本内部列名（各脚本所需列的并集）
 COL_MAP = {
