@@ -18,12 +18,13 @@ from pathlib import Path
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
+
+from core import load_dataframe, metric_table, SeqDataset
 
 warnings.filterwarnings("ignore")
 
@@ -38,67 +39,16 @@ OUT_DIR = Path("output_ot_models-new")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 VAL_RATIO = 0.1
 
-# Excel 原始列名 -> 脚本内部列名
-col_map = {
-    "time": "统计时间",
-    "OT": "OT",
-    "exog_temp": "Exogenous1",
-    "exog_wind": "Exogenous2",
-    "gen_speed": "平均发电机转速(rpm)",
-    "I_A": "平均网侧A相电流(A)",
-    "I_B": "平均网侧B相电流(A)",
-    "I_C": "平均网侧C相电流(A)",
-    "V_A": "平均网侧A相电压(V)",
-    "V_B": "平均网侧B相电压(V)",
-    "V_C": "平均网侧C相电压(V)",
-}
-
 TEST_RATIO = 0.20
 SEQ_LEN = 12
 BATCH_SIZE = 32
 EPOCHS = 20
 LR = 1e-3
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-EPS = 1e-6
 
-
-def metric_table(y_true, y_pred):
-    """计算单目标回归的常用指标。"""
-    y_true = np.array(y_true).ravel()
-    y_pred = np.array(y_pred).ravel()
-    mae = mean_absolute_error(y_true, y_pred)
-    mse = mean_squared_error(y_true, y_pred)
-    rmse = math.sqrt(mse)
-    nrmse = rmse / np.var(y_true) + 1e-9
-    r2 = r2_score(y_true, y_pred)
-    mape = np.mean(np.abs((y_true - y_pred) / (np.abs(y_true) + EPS))) * 100.0
-    smape = np.mean(np.abs((y_true - y_pred) / (np.abs(y_true) + np.abs(y_pred) + EPS)) * 100.0)
-    mase = np.mean(np.abs((y_true - y_pred) / (np.abs(y_true - y_true.mean()) + EPS)))
-    return {
-        "MAE": mae, "MSE": mse, "RMSE": rmse, "NRMSE": nrmse,
-        "R2": r2, "MAPE": mape, "SMAPE": smape, "MASE": mase,
-    }
-
-
-# 读取数据并统一列名
+# 读取数据（列名映射、排序、数值化、插值见 core.load_dataframe）
 data_path = "标注的数据-#67_1.xlsx"
-df = pd.read_excel(data_path)
-reverse_map = {v: k for k, v in col_map.items()}
-df = df.rename(columns={orig: new for orig, new in reverse_map.items() if orig in df.columns})
-
-if "time" in df.columns:
-    df["time"] = pd.to_datetime(df["time"])
-    df = df.sort_values("time").reset_index(drop=True)
-else:
-    raise ValueError("Time column not found. Check col_map mapping for 'time'.")
-
-required = ["OT", "exog_temp", "exog_wind"]
-for c in required:
-    if c not in df.columns:
-        raise ValueError(f"Missing required column: {c}")
-    df[c] = pd.to_numeric(df[c], errors="coerce")
-
-df = df.interpolate(limit=5).bfill().ffill()
+df = load_dataframe(data_path, required=["OT", "exog_temp", "exog_wind"])
 
 # 滚动均值 + 滞后特征（经典模型和后续分析会用到）
 df["temp_roll_3"] = df["exog_temp"].rolling(3, min_periods=1).mean()
@@ -190,27 +140,7 @@ joblib.dump((best_svr_pipe, feature_cols_classical), OUT_DIR / "svr_model.joblib
 results["SVR"] = metric_table(y_test, svr_pred)
 
 
-class SeqDataset(Dataset):
-    """滑窗序列：输入 [idx0, idx0+seq_len)，预测 idx0+seq_len 时刻的 OT。"""
-
-    def __init__(self, df_full, idx_start, idx_end, seq_len, feature_cols, target_col="OT"):
-        self.df = df_full
-        self.start = idx_start
-        self.end = idx_end
-        self.seq_len = seq_len
-        self.feature_cols = feature_cols
-        self.target_col = target_col
-
-    def __len__(self):
-        return max(0, self.end - self.start - self.seq_len + 1)
-
-    def __getitem__(self, idx):
-        idx0 = self.start + idx
-        seq = self.df.iloc[idx0: idx0 + self.seq_len][self.feature_cols].values.astype(np.float32)
-        y = self.df.iloc[idx0 + self.seq_len][self.target_col].astype(np.float32)
-        return seq, y
-
-
+# SeqDataset 来自 core.py
 # 序列模型只用温度和风速，scaler 同样只在训练集 fit
 feature_cols_seq = ["exog_temp", "exog_wind"]
 scaler_seq = StandardScaler()
