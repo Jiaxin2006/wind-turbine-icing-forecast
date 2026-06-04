@@ -30,7 +30,7 @@ from sklearn.ensemble import (
     AdaBoostRegressor,
 )
 from sklearn.neighbors import KNeighborsRegressor
-from sklearn.linear_model import BayesianRidge, RidgeCV
+from sklearn.linear_model import BayesianRidge, RidgeCV, LassoCV, ElasticNetCV
 from sklearn.svm import SVR
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
@@ -214,19 +214,41 @@ test_preds["SVR"] = best_svr.predict(test_df[feat_cols].values)
 records_test.append(metrics(y_test, test_preds["SVR"], "SVR"))
 
 # ─────────────────────────────── Stacking ────────────────────────────────────
-print("\n=== RidgeCV Stacking ===")
 # meta features: predictions on the meta-holdout split
 meta_X = np.column_stack([meta_preds[k] for k in meta_preds])
 meta_y = y_meta
-stacker = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
-stacker.fit(meta_X, meta_y)
-print(f"  Stacker alpha: {stacker.alpha_:.4f}")
-print(f"  Stacker coefs: { {k: f'{v:.3f}' for k,v in zip(meta_preds.keys(), stacker.coef_)} }")
-
 test_X_stack = np.column_stack([test_preds[k] for k in meta_preds])
-stack_pred = stacker.predict(test_X_stack)
-test_preds["Stacking_RidgeCV"] = stack_pred
-records_test.append(metrics(y_test, stack_pred, "Stacking_RidgeCV"))
+base_names = list(meta_preds.keys())
+
+print("\n=== Stacking — RidgeCV (L2) ===")
+stacker_ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
+stacker_ridge.fit(meta_X, meta_y)
+print(f"  alpha: {stacker_ridge.alpha_:.4f}")
+print(f"  coefs: { {k: f'{v:.3f}' for k,v in zip(base_names, stacker_ridge.coef_)} }")
+stack_pred_ridge = stacker_ridge.predict(test_X_stack)
+test_preds["Stacking_RidgeCV"] = stack_pred_ridge
+records_test.append(metrics(y_test, stack_pred_ridge, "Stacking_RidgeCV"))
+
+print("\n=== Stacking — LassoCV (L1, sparse) ===")
+stacker_lasso = LassoCV(alphas=[0.001, 0.01, 0.1, 1.0, 10.0], cv=5, max_iter=3000)
+stacker_lasso.fit(meta_X, meta_y)
+nonzero = int((stacker_lasso.coef_ != 0).sum())
+print(f"  alpha: {stacker_lasso.alpha_:.4f}  nonzero coefs: {nonzero}/{len(base_names)}")
+print(f"  coefs: { {k: f'{v:.3f}' for k,v in zip(base_names, stacker_lasso.coef_)} }")
+stack_pred_lasso = stacker_lasso.predict(test_X_stack)
+test_preds["Stacking_LassoCV"] = stack_pred_lasso
+records_test.append(metrics(y_test, stack_pred_lasso, "Stacking_LassoCV"))
+
+print("\n=== Stacking — ElasticNetCV (L1+L2) ===")
+stacker_en = ElasticNetCV(l1_ratio=[0.1, 0.5, 0.9, 1.0], cv=5, max_iter=3000)
+stacker_en.fit(meta_X, meta_y)
+nonzero_en = int((stacker_en.coef_ != 0).sum())
+print(f"  alpha: {stacker_en.alpha_:.4f}  l1_ratio: {stacker_en.l1_ratio_:.2f}  "
+      f"nonzero: {nonzero_en}/{len(base_names)}")
+print(f"  coefs: { {k: f'{v:.3f}' for k,v in zip(base_names, stacker_en.coef_)} }")
+stack_pred_en = stacker_en.predict(test_X_stack)
+test_preds["Stacking_ElasticNet"] = stack_pred_en
+records_test.append(metrics(y_test, stack_pred_en, "Stacking_ElasticNet"))
 
 # ─────────────────────────────── 保存结果 ────────────────────────────────────
 df_results = pd.DataFrame(records_test)
