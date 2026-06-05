@@ -1,7 +1,7 @@
 # 风机结冰相关工况下的时间序列预测与集成建模研究
 
 > 《机器学习概论》课程大实验 · 清华大学计算机系  
-> 完整报告见 [`Course_Report.md`](Course_Report.md)
+> 完整报告见 `[Course_Report.md](Course_Report.md)`
 
 ---
 
@@ -37,6 +37,7 @@ code/
 ├── ── 聚类与工况分析 ──────────────────────────────────────
 ├── embedding_analysis.py       # 抽 embedding → KMeans → ARI/NMI（补充参照）
 ├── cluster_eval.py             # 停机基线（OT<1000 kW）二分类评估
+├── ot_threshold_rationale.py     # 1000 kW 与 OT-KMeans 分界一致性验证（§3.6.9.0）
 ├── cluster_agglomerative.py    # AgglomerativeClustering vs KMeans
 ├── cluster_kmedoids.py         # 手写 PAM K-Medoids 对比
 │
@@ -47,7 +48,7 @@ code/
 ├── evaluate.py
 ├── visualize.py
 │
-├── Course_Report.md            # 课程报告正文（口径以本文为准）
+├── Course_Report.md            # 课程报告
 ├── Proposal.md
 └── requirements.txt
 ```
@@ -106,35 +107,39 @@ python3 bootstrap_cv_eval.py
 
 ---
 
-## 主要结果（与 Course_Report.md 对齐）
+## 主要结果
 
 ### 预测层：基础模型（测试集 N = 8,349，§4.1–4.2）
 
-| 模型 | MAE (W) | RMSE (W) | R² | 说明 |
-|------|--------:|---------:|---:|------|
-| **SVR** | **48.88** | 81.32 | 0.991 | 第一梯队，MAE 最低 |
-| **Random Forest** | 49.23 | 86.47 | 0.990 | 与 SVR 接近 |
-| **GBM** | 50.19 | 83.25 | 0.991 | `baselines_ext.py` |
-| **BayesianRidge** | 74.09 | 110.69 | 0.984 | |
-| **KNN** | 82.16 | 129.35 | 0.978 | |
-| **AdaBoost** | 187.50 | 221.46 | 0.934 | 补充基线 |
-| LSTM | 221.35 | 382.49 | 0.977 | 无强 OT 滞后通道 |
-| Transformer | 225.56 | 385.80 | 0.976 | |
-| CNN | 257.78 | 407.62 | 0.970 | |
+
+| 模型                | MAE (W)   | RMSE (W) | R²    | 说明                 |
+| ----------------- | --------- | -------- | ----- | ------------------ |
+| **SVR**           | **48.88** | 81.32    | 0.991 | 第一梯队，MAE 最低        |
+| **Random Forest** | 49.23     | 86.47    | 0.990 | 与 SVR 接近           |
+| **GBM**           | 50.19     | 83.25    | 0.991 | `baselines_ext.py` |
+| **BayesianRidge** | 74.09     | 110.69   | 0.984 |                    |
+| **KNN**           | 82.16     | 129.35   | 0.978 |                    |
+| **AdaBoost**      | 187.50    | 221.46   | 0.934 | 补充基线               |
+| LSTM              | 221.35    | 382.49   | 0.977 | 无强 OT 滞后通道         |
+| Transformer       | 225.56    | 385.80   | 0.976 |                    |
+| CNN               | 257.78    | 407.62   | 0.970 |                    |
+
 
 **序列扩展**（不同测试窗口，不参与 paired test）：CNN-LSTM-Attention MAE **67.47 W**；CNN-LSTM MAE **67.56 W**（§4.3）。
 
 ### 集成层（§4.4 口径说明）
 
-| 实验 | 脚本 | 基模型池 | 策略 | 代表 MAE (W) | RMSE (W) |
-|------|------|----------|------|-------------:|---------:|
-| 混合池探索 | `ensemble.py` | RF+SVR+CNN+LSTM+TR | Holdout + RidgeCV | 49.59 | **79.05** |
-| 强基线池 | `baselines_ext.py` | RF+GBM+KNN+BR+SVR | Holdout + RidgeCV | 51.75 | 79.87 |
-| OOF 全量（对照失败） | `oof_meta_shift_analysis.py` | 同上 | OOF + RidgeCV | ~176 | ~203 |
-| OOF 仅后 20%（消融） | 同上 | 同上 | OOF 子集 + RidgeCV | ~51 | — |
-| NNLS（失败对照） | `ensemble.py` | 混合池 | 非负加权 | ~947 | — |
 
-**结论（与报告一致）**：
+| 实验             | 脚本                           | 基模型池               | 策略                | 代表 MAE (W) | RMSE (W)  |
+| -------------- | ---------------------------- | ------------------ | ----------------- | ---------- | --------- |
+| 混合池探索          | `ensemble.py`                | RF+SVR+CNN+LSTM+TR | Holdout + RidgeCV | 49.59      | **79.05** |
+| 强基线池           | `baselines_ext.py`           | RF+GBM+KNN+BR+SVR  | Holdout + RidgeCV | 51.75      | 79.87     |
+| OOF 全量（对照失败）   | `oof_meta_shift_analysis.py` | 同上                 | OOF + RidgeCV     | ~176       | ~203      |
+| OOF 仅后 20%（消融） | 同上                           | 同上                 | OOF 子集 + RidgeCV  | ~51        | —         |
+| NNLS（失败对照）     | `ensemble.py`                | 混合池                | 非负加权              | ~947       | —         |
+
+
+**结论**：
 
 - 所有 stacking 变体的 **MAE 均未稳定低于 SVR**；Holdout stacking 主要 **降低 RMSE**（缓解大误差）。
 - **OOF 在时序 Expanding-Window 下失败**：meta 特征按时间混入「小样本折 / 大样本折」预测，与测试时全量重训基模型分布不一致；仅用 OOF 时间后 20% 训二层可恢复至 ~51 W（见 §5.11.5）。
@@ -142,14 +147,16 @@ python3 bootstrap_cv_eval.py
 
 ### 聚类与停机决策（N = 8,347，**主评测 OT < 1000 kW**，§5）
 
-| 方法 | 特征 | Accuracy | F1 | ARI vs OT-KMeans |
-|------|------|----------|-----|------------------|
-| **KMeans** | **Embedding** | **94.67%** | **95.45%** | 0.815 |
-| KMeans | Prediction | 93.96% | 94.92% | 0.815 |
-| Agglomerative-complete | Embedding | 89.82% | 91.80% | 0.718 |
-| Agglomerative-ward | Embedding | 86.43% | 89.40% | 0.619 |
-| Agglomerative-average | Embedding | 88.57% | 89.06% | 0.500 |
-| K-Medoids (PCA-10) | Embedding | — | — | 0.542（补充） |
+
+| 方法                     | 特征            | Accuracy   | F1         | ARI vs OT-KMeans |
+| ---------------------- | ------------- | ---------- | ---------- | ---------------- |
+| **KMeans**             | **Embedding** | **94.67%** | **95.45%** | 0.815            |
+| KMeans                 | Prediction    | 93.96%     | 94.92%     | 0.815            |
+| Agglomerative-complete | Embedding     | 89.82%     | 91.80%     | 0.718            |
+| Agglomerative-ward     | Embedding     | 86.43%     | 89.40%     | 0.619            |
+| Agglomerative-average  | Embedding     | 88.57%     | 89.06%     | 0.500            |
+| K-Medoids (PCA-10)     | Embedding     | —          | —          | 0.542（补充）        |
+
 
 > **94.67%** 表示 embedding 聚类与停机代理规则的一致性，**不是**结冰检测真值。旧版 0.952 为相对 `true_cluster` 的匈牙利对齐值，勿与主 Accuracy 并列。
 
@@ -165,16 +172,13 @@ python3 bootstrap_cv_eval.py
 
 ## 实验阶段与报告章节
 
-| 阶段 | 内容 | 报告章节 | 主要脚本 |
-|------|------|----------|----------|
-| 1 | 传统回归基线 | §4.1 | `baselines_ext.py`, `model.py` |
-| 2 | 序列模型与 NAS | §4.2–4.3 | `ensemble.py`, `train_cnn_lstm.py`, `cnn_lstm_grid_search.py` |
-| 3 | Stacking / 集成 | §4.4, §5.11 | `ensemble.py`, `baselines_ext.py`, `oof_meta_shift_analysis.py` |
-| 4 | 聚类与工况 | §5 | `embedding_analysis.py`, `cluster_*` |
-| 5 | CV / Bootstrap / 检验 | §4.6 | `bootstrap_cv_eval.py`, `final_evaluation.py` |
 
----
+| 阶段  | 内容                  | 报告章节        | 主要脚本                                                            |
+| --- | ------------------- | ----------- | --------------------------------------------------------------- |
+| 1   | 传统回归基线              | §4.1        | `baselines_ext.py`, `model.py`                                  |
+| 2   | 序列模型与 NAS           | §4.2–4.3    | `ensemble.py`, `train_cnn_lstm.py`, `cnn_lstm_grid_search.py`   |
+| 3   | Stacking / 集成       | §4.4, §5.11 | `ensemble.py`, `baselines_ext.py`, `oof_meta_shift_analysis.py` |
+| 4   | 聚类与工况               | §5          | `embedding_analysis.py`, `cluster_`*                            |
+| 5   | CV / Bootstrap / 检验 | §4.6        | `bootstrap_cv_eval.py`, `final_evaluation.py`                   |
 
-## 课程考点
 
-预测（A1–A3, A11–A13, A16–A19）、集成（A10）、无监督（A5/A6/A8）、实验准则（E1–E4）、假设检验与置信区间（T2）的覆盖说明见 **`Course_Report.md` 全文**及文末复现表（§8）。
