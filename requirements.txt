@@ -4,7 +4,6 @@ torch
 scikit-learn
 scipy
 matplotlib
-seaborn
 hmmlearn
 joblib
 tqdm

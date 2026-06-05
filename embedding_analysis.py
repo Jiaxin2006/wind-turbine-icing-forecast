@@ -7,8 +7,9 @@ embedding_analysis.py — CNN-LSTM-Attention embedding 聚类可视化与一致�
 """
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
 import joblib
 from pathlib import Path
 from sklearn.cluster import KMeans
@@ -20,7 +21,7 @@ from torch.utils.data import DataLoader
 
 from core import load_dataframe, SeqDatasetWithIdx
 
-sns.set(style="whitegrid")
+plt.rcParams.update({"axes.grid": True})
 
 # ---------- CONFIG ----------
 OUT_DIR = Path("out_cnn_lstm_cluster_1")
@@ -49,6 +50,7 @@ SCALER_PATH       = OUT_DIR / "scaler_inputs.joblib"
 
 EMB_NPY          = OUT_DIR / "test_embeddings.npy"
 META_CSV         = OUT_DIR / "test_embeddings_meta.csv"
+PRED_CSV         = OUT_DIR / "test_predictions_cnn_lstm_att.csv"
 SCATTER_PNG      = OUT_DIR / "scatter_ot_temp_by_emb_cluster.png"
 PRED_SCATTER_PNG = OUT_DIR / "scatter_ot_temp_by_pred_cluster.png"
 COMPARISON_PNG   = OUT_DIR / "clustering_comparison.png"
@@ -97,11 +99,6 @@ class CNN_LSTM_Attention(nn.Module):
         self.conv1 = nn.Conv1d(in_channels=feat_dim, out_channels=cnn_channels,
                                kernel_size=cnn_kernel, padding=cnn_kernel//2)
         self.act = nn.ReLU()
-        self.conv2 = nn.Conv1d(in_channels=cnn_channels, out_channels=cnn_channels,
-                               kernel_size=cnn_kernel, padding=cnn_kernel//2)
-        self.act = nn.ReLU()
-        self.conv3 = nn.Conv1d(in_channels=cnn_channels, out_channels=cnn_channels,
-                               kernel_size=cnn_kernel, padding=cnn_kernel//2)
         self.dropout_cnn = nn.Dropout(dropout_rate)
         self.lstm = nn.LSTM(input_size=cnn_channels, hidden_size=lstm_hid,
                             num_layers=1, batch_first=True)
@@ -120,7 +117,7 @@ class CNN_LSTM_Attention(nn.Module):
                                                              num_layers=num_transformer_layers)
         else:
             self.transformer_encoder = None
-        final_out_dim = 2 if USE_HETEROSCEDASTIC else 1
+        final_out_dim = 2 if self.hetero else 1
         self.fc = nn.Sequential(
             nn.Linear(d_model, 64),
             nn.ReLU(),
@@ -129,8 +126,6 @@ class CNN_LSTM_Attention(nn.Module):
     def forward(self, x):
         c = x.permute(0,2,1)
         c = self.act(self.conv1(c))
-        c = self.act(self.conv2(c))
-        c = self.act(self.conv3(c))
         c = self.dropout_cnn(c)
         c = c.permute(0,2,1)
         lstm_out, _ = self.lstm(c)
@@ -211,6 +206,15 @@ true_labels = np.array(true_labels)
 
 print("Embeddings shape:", embeddings.shape)
 print("Predictions shape:", predictions.shape)
+
+if PRED_CSV.exists():
+    pred_df = pd.read_csv(PRED_CSV)
+    if len(pred_df) == len(predictions) and {"OT_true", "OT_pred"}.issubset(pred_df.columns):
+        predictions = pred_df["OT_pred"].to_numpy()
+        true_labels = pred_df["OT_true"].to_numpy()
+        print(f"Using saved prediction scale from {PRED_CSV}")
+    else:
+        print(f"[WARN] {PRED_CSV} exists but does not match extracted sample count; using model outputs.")
 
 # ----------------- 保存数据 -----------------
 np.save(EMB_NPY, embeddings)
@@ -406,7 +410,8 @@ plot_df = pd.DataFrame({
 
 # ----------------- 可视化对比 (纯聚类视角) -----------------
 fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-palette = sns.color_palette("tab10", n_colors=N_CLUSTERS)
+cmap = plt.get_cmap("tab10")
+palette = [cmap(i % 10) for i in range(N_CLUSTERS)]
 
 # 1. 真实标签的聚类结果
 ax1 = axes[0, 0]
@@ -501,7 +506,7 @@ print(f"真实标签聚类中心: {kmeans_true.cluster_centers_.flatten()}")
 print(f"预测值聚类中心: {kmeans_pred.cluster_centers_.flatten()}")
 print(f"聚类中心差异: {np.abs(kmeans_true.cluster_centers_.flatten() - kmeans_pred.cluster_centers_.flatten())}")
 
-# 创建类似论文表格的输出
+# 创建报告中可直接引用的表格式输出
 print(f"\n" + "="*60)
 print("TABLE: CLUSTERING CLASSIFICATION RESULTS")
 print("="*60)

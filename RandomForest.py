@@ -10,6 +10,8 @@ RandomForest.py — 风机多输出回归基线（有功功率 + 发电机转速
 import argparse
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -62,7 +64,7 @@ def build_pipeline(n_estimators: int = RF_N_ESTIMATORS) -> Pipeline:
                 RandomForestRegressor(
                     n_estimators=n_estimators,
                     random_state=RANDOM_STATE,
-                    n_jobs=-1,
+                    n_jobs=1,
                 )
             ),
         ),

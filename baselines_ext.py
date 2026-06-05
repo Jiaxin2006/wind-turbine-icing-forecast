@@ -145,10 +145,10 @@ print("\n=== Training baseline models ===")
 
 # ── A12  RandomForest（Bagging baseline，与主表对齐） ──────────────────────
 print("[RF]  RandomForest (Bagging, A11/A12)")
-rf = RandomForestRegressor(n_estimators=200, random_state=SEED, n_jobs=-1)
+rf = RandomForestRegressor(n_estimators=200, random_state=SEED, n_jobs=1)
 rf.fit(X_tt, y_tt)
 meta_preds["RF"] = rf.predict(X_meta)
-m_full = retrain_full(RandomForestRegressor, n_estimators=200, random_state=SEED, n_jobs=-1)
+m_full = retrain_full(RandomForestRegressor, n_estimators=200, random_state=SEED, n_jobs=1)
 test_preds["RF"] = m_full.predict(X_test)
 records_test.append(metrics(y_test, test_preds["RF"], "RF"))
 
@@ -182,10 +182,10 @@ records_test.append(metrics(y_test, test_preds["AdaBoost"], "AdaBoost"))
 
 # ── A3   KNN（非参数，距离加权）──────────────────────────────────────────
 print("[KNN] KNeighborsRegressor (non-parametric, A3)")
-knn = KNeighborsRegressor(n_neighbors=10, weights="distance", n_jobs=-1)
+knn = KNeighborsRegressor(n_neighbors=10, weights="distance", n_jobs=1)
 knn.fit(X_tt, y_tt)
 meta_preds["KNN"] = knn.predict(X_meta)
-m_knn = retrain_full(KNeighborsRegressor, n_neighbors=10, weights="distance", n_jobs=-1)
+m_knn = retrain_full(KNeighborsRegressor, n_neighbors=10, weights="distance", n_jobs=1)
 test_preds["KNN"] = m_knn.predict(X_test)
 records_test.append(metrics(y_test, test_preds["KNN"], "KNN"))
 
@@ -203,7 +203,7 @@ print("[SVR] SVR (grid search, for cross-check)")
 tscv = TimeSeriesSplit(n_splits=4)
 pipe = Pipeline([("scaler", StandardScaler()), ("svr", SVR(kernel="rbf"))])
 pg   = {"svr__C": [1, 10, 50], "svr__epsilon": [0.1, 0.5], "svr__gamma": ["scale"]}
-gs   = GridSearchCV(pipe, pg, cv=tscv, scoring="neg_mean_absolute_error", n_jobs=-1)
+gs   = GridSearchCV(pipe, pg, cv=tscv, scoring="neg_mean_absolute_error", n_jobs=1)
 gs.fit(train_train_df[feat_cols].values, y_tt)
 best_svr = gs.best_estimator_
 meta_preds["SVR"] = best_svr.predict(meta_holdout_df[feat_cols].values)

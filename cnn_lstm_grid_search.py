@@ -17,6 +17,8 @@ import os, math, random, json, time, itertools
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import joblib
 

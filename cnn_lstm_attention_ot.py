@@ -12,7 +12,7 @@ Outputs:
  - test predictions CSV (time, OT_true, OT_pred)
  - metrics (MAE, MSE, RMSE, MAPE) printed and saved
 
-Requirements: numpy, pandas, scikit-learn, matplotlib, seaborn, torch, joblib
+Requirements: numpy, pandas, scikit-learn, matplotlib, torch, joblib
 """
 
 import os
@@ -21,8 +21,9 @@ import random
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
 import joblib
 import time
 
@@ -68,7 +69,7 @@ LR_FACTOR = 0.5     # 学习率衰减倍数
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", DEVICE)
 
-sns.set(style="whitegrid")
+plt.rcParams.update({"axes.grid": True})
 
 # ------------------ UTIL ------------------
 def mape(true, pred):

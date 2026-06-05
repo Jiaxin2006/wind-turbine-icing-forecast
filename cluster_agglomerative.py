@@ -20,7 +20,6 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
 from pathlib import Path
 
 from sklearn.cluster import KMeans, AgglomerativeClustering
@@ -235,8 +234,16 @@ for ax, data, title, fmt in zip(
     ["Adjusted Rand Index (ARI)\nvs True-OT Reference", "F1 Score\nvs True-OT Reference"],
     [".3f", ".3f"]
 ):
-    sns.heatmap(data, ax=ax, annot=True, fmt=fmt, cmap="YlOrRd",
-                vmin=0, vmax=1, linewidths=0.5, cbar_kws={"shrink": 0.8})
+    values = data.to_numpy(dtype=float)
+    im = ax.imshow(values, cmap="YlOrRd", vmin=0, vmax=1)
+    fig.colorbar(im, ax=ax, shrink=0.8)
+    ax.set_xticks(range(data.shape[1]), data.columns)
+    ax.set_yticks(range(data.shape[0]), data.index)
+    for i in range(data.shape[0]):
+        for j in range(data.shape[1]):
+            val = values[i, j]
+            label = "" if np.isnan(val) else format(val, fmt)
+            ax.text(j, i, label, ha="center", va="center", fontsize=8)
     ax.set_title(title, fontsize=10)
     ax.set_ylabel("")
 

@@ -146,7 +146,7 @@ trainval_df = pd.concat([train_df, val_df], ignore_index=True)
 n_tv = len(trainval_df)
 
 BASE_MODELS = {
-    "RF": RandomForestRegressor(n_estimators=200, random_state=SEED, n_jobs=-1),
+    "RF": RandomForestRegressor(n_estimators=200, random_state=SEED, n_jobs=1),
     "GBM": GradientBoostingRegressor(
         n_estimators=200,
         max_depth=4,
@@ -154,7 +154,7 @@ BASE_MODELS = {
         subsample=0.8,
         random_state=SEED,
     ),
-    "KNN": KNeighborsRegressor(n_neighbors=10, weights="distance", n_jobs=-1),
+    "KNN": KNeighborsRegressor(n_neighbors=10, weights="distance", n_jobs=1),
     "BR": BayesianRidge(max_iter=300),
 }
 SVR_PARAMS = {"C": 10, "epsilon": 0.1, "gamma": "scale"}

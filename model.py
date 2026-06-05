@@ -8,10 +8,11 @@ import math
 import warnings
 
 import joblib
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import torch
 import torch.nn as nn
 from pathlib import Path
@@ -108,7 +109,7 @@ df["cluster_label"] = df["cluster"].map(label_map)
 results = {}
 
 # RandomForest 基线
-rf = RandomForestRegressor(n_estimators=10, random_state=SEED, n_jobs=-1)
+rf = RandomForestRegressor(n_estimators=10, random_state=SEED, n_jobs=1)
 rf.fit(X_train_cl_s, y_train)
 rf_pred = rf.predict(X_test_cl_s)
 results["RandomForest"] = metric_table(y_test, rf_pred)
@@ -127,7 +128,7 @@ grid = GridSearchCV(
     },
     cv=tscv,
     scoring="neg_mean_absolute_error",
-    n_jobs=-1,
+    n_jobs=1,
 )
 grid.fit(X_train_cl, y_train)  # 传入原始特征，Pipeline 内部做 scaling
 best_svr_pipe = grid.best_estimator_
@@ -330,7 +331,7 @@ metrics_df = pd.DataFrame(results).T
 metrics_df.to_csv(OUT_DIR / "model_metrics.csv")
 
 # 保存对比图：真值 vs 预测、残差分布、MAE 柱状图、聚类 PCA
-sns.set_style("whitegrid")
+plt.rcParams.update({"axes.grid": True})
 time_vals = test_rows["time"]
 for model_name in results:
     pred_col = f"OT_pred_{model_name}"

@@ -9,8 +9,9 @@ import random
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
 import joblib
 
 from sklearn.ensemble import RandomForestRegressor
@@ -55,7 +56,7 @@ EPOCHS_CNN_TUNE = 24
 LR = 5e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-sns.set(style="whitegrid")
+plt.rcParams.update({"axes.grid": True})
 
 # 读取数据（列名映射、排序、数值化、插值见 core.load_dataframe）
 print("Reading data...")
@@ -124,14 +125,14 @@ meta_seq_loader = DataLoader(SeqDataset(df_seq_scaled, train_train_end-1, train_
 
 # 经典模型：RF 直接训练，SVR 用 TimeSeriesSplit 网格搜索
 print("\nTraining RandomForest on train_train...")
-rf_tt = RandomForestRegressor(n_estimators=200, random_state=SEED, n_jobs=-1)
+rf_tt = RandomForestRegressor(n_estimators=200, random_state=SEED, n_jobs=1)
 rf_tt.fit(X_train_cl, y_train_tt)
 
 print("GridSearch SVR (TimeSeriesSplit) on train_train...")
 tscv = TimeSeriesSplit(n_splits=4)
 pipe = Pipeline([('scaler', StandardScaler()), ('svr', SVR(kernel='rbf'))])
 param_grid_pipe = {'svr__C':[0.1,1,10,50], 'svr__epsilon':[0.1,0.5,1.0], 'svr__gamma':['scale','auto']}
-grid = GridSearchCV(pipe, param_grid_pipe, cv=tscv, scoring='neg_mean_absolute_error', n_jobs=-1)
+grid = GridSearchCV(pipe, param_grid_pipe, cv=tscv, scoring='neg_mean_absolute_error', n_jobs=1)
 grid.fit(train_train_df[feature_cols_classical].values, train_train_df['OT'].values)
 pd.DataFrame(grid.cv_results_).to_csv(OUT_DIR/'svr_grid_results.csv', index=False)
 best_svr_pipe = grid.best_estimator_
@@ -208,7 +209,7 @@ print("\nRefitting base models on combined training set for final predictions...
 X_all_train = np.vstack([train_train_df[feature_cols_classical].values, meta_holdout_df[feature_cols_classical].values, val_df[feature_cols_classical].values])
 y_all_train = np.concatenate([train_train_df['OT'].values, meta_holdout_df['OT'].values, val_df['OT'].values])
 
-rf_final = RandomForestRegressor(n_estimators=300, random_state=SEED, n_jobs=-1)
+rf_final = RandomForestRegressor(n_estimators=300, random_state=SEED, n_jobs=1)
 rf_final.fit(scaler_cl.transform(X_all_train), y_all_train)
 best_svr_pipe.fit(X_all_train, y_all_train)
 # final NN models (final_cnn, lstm_final, tr_final) already retrained on combined

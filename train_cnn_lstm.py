@@ -20,8 +20,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
 import joblib
 
 from sklearn.preprocessing import StandardScaler
@@ -84,7 +85,7 @@ HUBER_DELTA = 1.0     # HuberLoss delta
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", DEVICE)
-sns.set(style="whitegrid")
+plt.rcParams.update({"axes.grid": True})
 
 # ------------------ Utils ------------------
 def mape(true, pred):

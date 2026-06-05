@@ -26,7 +26,6 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.neighbors import KNeighborsRegressor
@@ -92,7 +91,7 @@ y_train  = train_df["OT"].values
 tscv = TimeSeriesSplit(n_splits=5)
 
 MODELS_CV = {
-    "RF":           RandomForestRegressor(n_estimators=100, random_state=SEED, n_jobs=-1),
+    "RF":           RandomForestRegressor(n_estimators=100, random_state=SEED, n_jobs=1),
     "GBM":          GradientBoostingRegressor(n_estimators=100, max_depth=4, learning_rate=0.1,
                                               subsample=0.8, random_state=SEED),
     "KNN":          Pipeline([("sc", StandardScaler()),

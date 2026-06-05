@@ -2,14 +2,16 @@
 
 import os, json
 import numpy as np, pandas as pd
-import matplotlib.pyplot as plt, seaborn as sns
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import confusion_matrix
-sns.set(style="whitegrid")
+plt.rcParams.update({"axes.grid": True})
 
 OUT_DIR = "out_cnn_lstm_cluster_1"
-# full_clustering_analysis.csv is produced by embedding_analysis.py and contains the same
-# columns (OT_true, exog_temp, emb_cluster) previously written by the deleted test.py
+# full_clustering_analysis.csv is produced by embedding_analysis.py and contains
+# the columns needed for shutdown-rule evaluation.
 CSV_PATH = os.path.join(OUT_DIR, "full_clustering_analysis.csv")
 EMB_PATHS = [os.path.join(OUT_DIR, "test_embeddings.npy"),
              os.path.join(OUT_DIR, "embeddings.npy"),
@@ -96,7 +98,8 @@ print("Saved metrics JSON to:", METRICS_JSON)
 
 # 4. scatter plot: OT_true (x) vs exog_temp (y), colored by emb_cluster; mark predicted shutdown clusters
 plt.figure(figsize=(8,6))
-palette = sns.color_palette("tab10", n_colors=len(df['emb_cluster'].unique()))
+cmap = plt.get_cmap("tab10")
+palette = [cmap(i % 10) for i in range(len(df['emb_cluster'].unique()))]
 for c in sorted(df['emb_cluster'].unique()):
     sub = df[df['emb_cluster']==c]
     label = f"cluster_{c} (pred={'CLOSE' if mapping[c]==1 else 'KEEP'})"
