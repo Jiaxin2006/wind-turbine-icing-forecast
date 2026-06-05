@@ -7,7 +7,7 @@
 
 ## 摘要
 
-风机在低温、大风等环境下可能出现叶片结冰或结冰相关异常工况，导致风机运行功率下降，并增加停机决策难度。本文围绕风机运行功率 `OT` 的短时预测任务，使用 2024 年 2 月分钟级风机运行数据，比较传统回归模型、深度序列模型、stacking 集成模型与工况划分方法的效果。实验采用按时间顺序划分训练集、验证集和测试集的方案，以避免未来信息泄露。预测层主结果（§4）覆盖 RF、SVR、GBM、AdaBoost、KNN、BayesianRidge、CNN、LSTM、Transformer、CNN-LSTM 与 CNN-LSTM-Attention；集成层（§4.4）在统一强基模型池 `RF+GBM+BayesianRidge+SVR` 下公平比较 Holdout/OOF stacking 与 NNLS。结果显示：SVR/RF/GBM 在滞后与滚动统计特征上表现最稳健；CNN-LSTM 及 CNN-LSTM-Attention 在序列结构扩展实验中显著优于单一深度模块。Stacking 在 RMSE 上有改进，但 MAE 未稳定超过最佳单模型。聚类与工况划分集中在 §5 报告，以 CNN-LSTM-Attention embedding 为代表，并统一在 `OT<1000 kW` 停机代理标签上报告 Accuracy/F1；主结果聚类准确率为 **94.67%**。
+风机在低温、大风等环境下可能出现叶片结冰或结冰相关异常工况，导致风机运行功率下降，并增加停机决策难度。本文围绕风机运行功率 `OT` 的短时预测任务，使用 2024 年 2 月分钟级风机运行数据，比较传统回归模型、深度序列模型、stacking 集成模型与工况划分方法的效果。实验采用按时间顺序划分训练集、验证集和测试集的方案，以避免未来信息泄露。预测层主结果（§4）覆盖 RF、SVR、GBM、AdaBoost、KNN、BayesianRidge、CNN、LSTM、Transformer、CNN-LSTM 与 CNN-LSTM-Attention；集成层（§4.4）在统一强基模型池 `RF+GBM+BayesianRidge+SVR` 下公平比较 Holdout/OOF stacking 与 NNLS。结果显示：SVR/RF/GBM 在滞后与滚动统计特征上表现最稳健；CNN-LSTM 及 CNN-LSTM-Attention 在序列结构扩展实验中显著优于单一深度模块。Stacking 在 RMSE 上有改进，但 MAE 未稳定超过最佳单模型。聚类与工况划分集中在 §5 报告，以 CNN-LSTM-Attention embedding 为代表，并统一在 `OT<1000 kW` 停机标签上报告 Accuracy/F1；主结果聚类准确率为 **94.67%**。
 
 ## 1. 引言
 
@@ -42,8 +42,6 @@
 - **停机规则评测**：以 `OT < 1000 kW` 为代理标签，评估 embedding 聚类与低功率停机规则的一致性。
 
 **（5）建立规范的实验评估流程。** 在时间顺序划分、防泄露预处理的基础上，补充 TimeSeriesSplit 交叉验证、测试集 Bootstrap 置信区间，以及 paired t-test / Wilcoxon 显著性检验，使模型比较不仅看点估计，也看统计不确定性与方法差异是否稳健。
-
-上述目标中，（1）–（3）主要回答“预测准不准”，（4）回答“能否解释不同运行状态”，（5）回答“结论是否可靠”。这些目标相互配合：工况划分不以降低主预测 MAE 为唯一目的，集成学习也不替代聚类分析。
 
 ## 2. 数据来源与预处理
 
@@ -80,7 +78,7 @@
 5. 构造滞后特征，例如 `OT_lag_1`、`OT_lag_2`、`OT_lag_3`、`OT_lag_6`、`OT_lag_12`。
 6. 按时间顺序划分训练集、验证集和测试集，再在训练集上拟合标准化器，之后变换验证集和测试集。
 
-所有需要拟合的数据处理步骤均应只在训练集上拟合。预测层结果以 `ensemble.py`、`baselines_ext.py` 和 `final_evaluation.py` 的无泄露评估为准，公平集成结果以 `stacking_fair_pool.py` 为准。
+所有需要拟合的数据处理步骤均应只在训练集上拟合。预测层结果以 `prediction/ensemble.py`、`prediction/baselines_ext.py` 和 `prediction/final_evaluation.py` 的无泄露评估为准，公平集成结果以 `stacking/stacking_fair_pool.py` 为准。
 
 ## 3. 实验方案设计
 
@@ -205,17 +203,16 @@
 
 | 模型 / 结构                         | 调参方法                                  | 搜索空间要点                                                                                                                           | 脚本                               |
 | ------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| **Random Forest**               | 固定强基线配置                               | `n_estimators=200–300`，默认深度不限制；使用完整 lag+rolling 特征                                                                               | `ensemble.py`、`baselines_ext.py` |
-| **SVR**                         | **GridSearchCV + TimeSeriesSplit(4)** | `C∈{0.1,1,10,50}`，`epsilon∈{0.1,0.5,1}`，`gamma∈{scale,auto}`；Pipeline 内 StandardScaler                                           | `ensemble.py`、`baselines_ext.py` |
-| **GBM**                         | 固定配置                                  | `n_estimators=200`，`max_depth=4`，`learning_rate=0.1`，`subsample=0.8`                                                             | `baselines_ext.py`               |
-| **AdaBoost**                    | 固定配置                                  | 基学习器 `DecisionTree(max_depth=3)`，`n_estimators=100`                                                                              | `baselines_ext.py`               |
-| **KNN**                         | 固定配置                                  | `n_neighbors=10`，`weights=distance`                                                                                              | `baselines_ext.py`               |
-| **BayesianRidge**               | **Evidence Maximization（自动）**         | `max_iter=300`，正则强度由边际似然估计，无需手工 CV                                                                                               | `baselines_ext.py`               |
-| **CNN / LSTM / Transformer**    | **小网格 + meta_holdout 早停**             | CNN：`hid∈{32,64}`、`kernel∈{3,5}`；LSTM/Transformer：`hid/d_model=64`；在 `train_train` 训练、meta_holdout 选优后合并 train+val 重训            | `ensemble.py`                    |
-| **CNN-LSTM / Attention / 组合结构** | **随机子采样网格 + 验证集**                     | `MODEL_TYPE` 含 `mlp/cnn/lstm/cnn_lstm/cnn_lstm_attn` 及 `*_mlp` 组合；`SEQ_LEN∈{2,4,8,16}`，学习率、通道数、是否异方差 NLL/非对称损失/峰值过采样等；测试集报最优 run | `cnn_lstm_grid_search.py`        |
+| **Random Forest**               | 固定强基线配置                               | `n_estimators=200–300`，默认深度不限制；使用完整 lag+rolling 特征                                                                               | `prediction/ensemble.py`、`prediction/baselines_ext.py` |
+| **SVR**                         | **GridSearchCV + TimeSeriesSplit(4)** | `C∈{0.1,1,10,50}`，`epsilon∈{0.1,0.5,1}`，`gamma∈{scale,auto}`；Pipeline 内 StandardScaler                                           | `prediction/ensemble.py`、`prediction/baselines_ext.py` |
+| **GBM**                         | 固定配置                                  | `n_estimators=200`，`max_depth=4`，`learning_rate=0.1`，`subsample=0.8`                                                             | `prediction/baselines_ext.py`               |
+| **AdaBoost**                    | 固定配置                                  | 基学习器 `DecisionTree(max_depth=3)`，`n_estimators=100`                                                                              | `prediction/baselines_ext.py`               |
+| **KNN**                         | 固定配置                                  | `n_neighbors=10`，`weights=distance`                                                                                              | `prediction/baselines_ext.py`               |
+| **BayesianRidge**               | **Evidence Maximization（自动）**         | `max_iter=300`，正则强度由边际似然估计，无需手工 CV                                                                                               | `prediction/baselines_ext.py`               |
+| **CNN / LSTM / Transformer**    | **小网格 + meta_holdout 早停**             | CNN：`hid∈{32,64}`、`kernel∈{3,5}`；LSTM/Transformer：`hid/d_model=64`；在 `train_train` 训练、meta_holdout 选优后合并 train+val 重训            | `prediction/ensemble.py`                    |
+| **CNN-LSTM / Attention / 组合结构** | **随机子采样网格 + 验证集**                     | `MODEL_TYPE` 含 `mlp/cnn/lstm/cnn_lstm/cnn_lstm_attn` 及 `*_mlp` 组合；`SEQ_LEN∈{2,4,8,16}`，学习率、通道数、是否异方差 NLL/非对称损失/峰值过采样等；测试集报最优 run | `sequence/cnn_lstm_grid_search.py`        |
 
-
-**实验说明**：主预测实验使用 **lag+rolling 全特征 + 统一测试集 N=8349**；序列结构扩展实验使用 `**OT_prev`+温风速、目标标准化、N≈8351**。两类实验服务于不同问题：前者比较不同模型在强特征工程下的预测上限，后者比较 CNN/LSTM/Attention 结构细节的有效性。因此，报告在解读时更关注各自实验内部的相对排序，而不把两张表的 MAE 作机械横比。
+**实验说明**：主预测实验使用 **lag+rolling 全特征 + 统一测试集 N=8349**；序列结构扩展实验使用 **`OT_prev`+温风速、目标标准化、N≈8351**。两类实验服务于不同问题：前者比较不同模型在强特征工程下的预测上限，后者比较 CNN/LSTM/Attention 结构细节的有效性。因此，报告在解读时更关注各自实验内部的相对排序，而不把两张表的 MAE 作直接横比。
 
 #### 3.6.5 对照实验
 
@@ -228,7 +225,7 @@ paired 检验在主预测实验的最佳模型之间进行（§4.6）；不同�
 
 #### 3.6.6 统计检验
 
-为了比较模型误差差异，本文使用测试集逐点绝对误差进行配对检验。`final_evaluation.py` 输出预测层配对检验，`stacking_fair_pool.py` 输出公平集成实验的配对 t-test 与 Wilcoxon 检验；若运行环境缺少 `scipy`，则退化为配对 sign test。统计检验只用于辅助判断，不替代误差指标和预测曲线分析。
+为了比较模型误差差异，本文使用测试集逐点绝对误差进行配对检验。`prediction/final_evaluation.py` 输出预测层配对检验，`stacking/stacking_fair_pool.py` 输出公平集成实验的配对 t-test 与 Wilcoxon 检验；若运行环境缺少 `scipy`，则退化为配对 sign test。统计检验只用于辅助判断，不替代误差指标和预测曲线分析。
 
 配对检验选择是因为每个模型对同一批测试样本作出预测——两个模型的误差序列是"成对"的，可以直接对每个样本计算误差差值，然后检验差值的均值是否显著偏离 0。这比先计算各模型误差均值再做双样本 t 检验更有统计功效，也更贴近"在同一数据集上哪个模型更好"的问题。
 
@@ -236,7 +233,7 @@ Wilcoxon 符号秩检验是 paired t-test 的非参数替代，不假设误差�
 
 #### 3.6.7 显式 k 折交叉验证
 
-对于训练集规模足够的传统模型，本文在 `bootstrap_cv_eval.py` 中额外做了显式 `TimeSeriesSplit(n_splits=5)` 交叉验证。时序 k 折不打乱时间顺序：前 k−1 折逐步增大训练窗口（expanding window），第 k 折为该窗口之后的一段时间。
+对于训练集规模足够的传统模型，本文在 `validation/bootstrap_cv_eval.py` 中额外做了显式 `TimeSeriesSplit(n_splits=5)` 交叉验证。时序 k 折不打乱时间顺序：前 k−1 折逐步增大训练窗口（expanding window），第 k 折为该窗口之后的一段时间。
 
 这与常规 k 折的区别在于：普通 k 折将未来时间片随机分配到训练集中，破坏了时间因果性；时序 k 折保持因果顺序，每折只能"往后看"而不能"往前看"。代价是每折训练集大小不同，方差略大于均匀 k 折。
 
@@ -258,7 +255,7 @@ Bootstrap 的适用性：测试集 N=8349 个样本是独立的时序点（已�
 
 **（1）真实功率无监督二分的分界与 1000 kW 同量级**
 
-在测试集（N=8,347）上对 `OT_true` 做 KMeans(k=2)（与 `embedding_analysis.py` 中 OT-KMeans 参照分群相同设定），得到两簇质心约为 **340 W**（低功率簇）与 **1889 W**（高功率簇），1D KMeans 的决策中点（两质心算术平均）约为 **1115 W**。测试集 OT 中位数为 **808 W**，整体呈双模态结构。
+在测试集（N=8,347）上对 `OT_true` 做 KMeans(k=2)（与 `clustering/embedding_analysis.py` 中 OT-KMeans 参照分群相同设定），得到两簇质心约为 **340 W**（低功率簇）与 **1889 W**（高功率簇），1D KMeans 的决策中点（两质心算术平均）约为 **1115 W**。测试集 OT 中位数为 **808 W**，整体呈双模态结构。
 
 固定阈值 `OT < 1000 kW` 与 KMeans 低功率簇标签的一致率为 **96.38%**（ARI=**0.860**）；仅 **302 条（3.62%）** 样本落在 `[1000, 1115) W` 的模糊带内——即若将阈值从 1000 kW 改为 KMeans 数学中点 1115 W，标签只会翻转约 3.6% 的样本。在 800–1200 W 范围内以 50 W 步长扫描，**1000 kW 处于与 OT-KMeans 高一致性的区间**（950 W 时 ARI=0.803，1050 W 时 ARI=0.925），说明 1000 kW 并非与数据结构相悖的任意切点。
 
@@ -284,11 +281,11 @@ Bootstrap 的适用性：测试集 N=8349 个样本是独立的时序点（已�
 ##### 3.6.9.1 主评测与补充评测
 
 
-| 维度        | **主评测**：`OT_true < 1000 kW` 停机代理                                        | **补充评测**：`OT_true` 上 KMeans(k=2) 参照分群                          |
-| --------- | ----------------------------------------------------------------------- | -------------------------------------------------------------- |
-| **定义**    | 工程规则：瞬时功率低于 1000 kW → 应停机（CLOSE）                                        | 对连续 OT 无监督二分，得到 `true_cluster`                                 |
-| **合理性**   | 阈值可审计、可对接运行规程；见 §3.6.9.0（数据分界 ≈1115 W，与 1000 kW 一致率 96.4%；电机系老师认可工程合理性） | 用于检验 embedding 是否保留**功率分档结构**；与监督目标 `OT` 相关，**不宜**作为主 Accuracy |
-| **本报告用法** | **所有主表 Accuracy / F1 / Precision / Recall 均用此基线**                       | 仅报告 **ARI / NMI**（附录可保留匈牙利 Accuracy）                           |
+| 维度           | **主评测**：`OT_true < 1000 kW` 停机代理                     | **补充评测**：`OT_true` 上 KMeans(k=2) 参照分群              |
+| -------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| **定义**       | 工程规则：瞬时功率低于 1000 kW → 应停机（CLOSE）             | 对连续 OT 无监督二分，得到 `true_cluster`                    |
+| **合理性**     | 阈值可审计、可对接运行规程；见 §3.6.9.0（数据分界 ≈1115 W，与 1000 kW 一致率 96.4%；电机系老师认可工程合理性） | 用于检验 embedding 是否保留**功率分档结构**；与监督目标 `OT` 相关，**不宜**作为主 Accuracy |
+| **本报告用法** | **所有主表 Accuracy / F1 / Precision / Recall 均用此基线**   | 仅报告 **ARI / NMI**                                         |
 
 
 **结论**：与停机决策相关的结论统一使用停机代理评测；OT-KMeans 是内部分群一致性检查，**不得**与 94.67% 混为两个"准确率"。
@@ -303,7 +300,7 @@ Bootstrap 的适用性：测试集 N=8349 个样本是独立的时序点（已�
 | **聚类**           | KMeans(k=2)（或 §5.3–§5.4 的其他聚类器）→ 簇标签                                                                                                      |
 | **二分类映射**        | 每簇对 `should_close = (OT_true < 1000)` **多数投票** → CLOSE/KEEP                                                                               |
 | **Ground truth** | `should_close_true = 1` 当且仅当 `OT_true < 1000 kW`                                                                                          |
-| **脚本**           | `cluster_eval.py`、`cluster_unified_eval.py`、`ot_threshold_rationale.py` → `clustering_shutdown_metrics.csv` / `output_cluster_threshold/` |
+| **脚本**           | `clustering/cluster_eval.py`、`clustering/cluster_unified_eval.py`、`clustering/ot_threshold_rationale.py` → `clustering_shutdown_metrics.csv` / `output_cluster_threshold/` |
 
 
 ##### 3.6.9.3 补充：相对 OT-KMeans 的一致性（不用于主 Accuracy）
@@ -375,7 +372,7 @@ Bootstrap 的适用性：测试集 N=8349 个样本是独立的时序点（已�
 
 ### 4.4 Stacking 模型聚合
 
-集成层输入为**基模型在测试集上的预测**，输出为融合后的 `OT`（见 §3.5 聚合层）。为避免把“集成方法差异”和“基模型池差异”混在一起，本文新增 `stacking_fair_pool.py`，固定同一个强基模型池：
+集成层输入为**基模型在测试集上的预测**，输出为融合后的 `OT`（见 §3.5 聚合层）。为避免把“集成方法差异”和“基模型池差异”混在一起，本文新增 `stacking/stacking_fair_pool.py`，固定同一个强基模型池：
 
 > **StrongPool = RF + GBM + BayesianRidge + SVR**
 
@@ -398,7 +395,9 @@ Bootstrap 的适用性：测试集 N=8349 个样本是独立的时序点（已�
 | *参考：RF 单模型*  | —                | —          | *49.34*   | *86.67*   | *0.9900*   |
 
 
-统一 StrongPool 下的 stacking 策略对比
+![统一 StrongPool 下的 stacking 策略对比](output_stacking_fair/stacking_fair_strong_pool_mae.png)
+
+*图 4-1：StrongPool 下 Holdout 与 OOF 各元学习器的测试 MAE 对比（`stacking/stacking_fair_pool.py` 生成）。*
 
 结果说明三点。第一，**所有公平集成方法的 MAE 都没有超过最佳单模型 SVR**；最佳 Holdout ElasticNetCV 为 51.31 W，比 SVR 高约 2.43 W。第二，Holdout stacking 的 RMSE 可降到 79.61–80.14 W，略低于 SVR 的 81.32 W，说明二层融合主要改善大误差而不是平均绝对误差。第三，修正后的 OOF 不再出现旧脚本中由未覆盖 OOF 行引起的异常结果，但仍明显弱于 Holdout（约 60.5 W vs 51.3 W），说明在本月内非平稳时序数据上，OOF 生成的 meta-feature 与测试阶段“全量重训基模型”的预测分布仍不够一致。
 
@@ -408,14 +407,14 @@ Bootstrap 的适用性：测试集 N=8349 个样本是独立的时序点（已�
 
 #### 4.4.1 基模型池差异的影响
 
-Stacking 的数值**必须连同"基模型池（Pool）""meta-feature 怎么生成""二层用什么学习器"一起说明**，否则容易出现不同实验结果的误解。本实验实际跑过四套相关设定：
+Stacking 的数值**必须连同"基模型池（Pool）""meta-feature 怎么生成""二层用什么学习器"一起说明**，否则容易出现不同实验结果的误解。实验中曾经跑过四套相关设定：
 
 | 名称 | 基模型成员 | 主要脚本 | 在报告中的角色 |
 |------|------------|----------|----------------|
-| **StrongPool** | RF + GBM + BayesianRidge + SVR | `stacking_fair_pool.py` | **§4.4 主表与统计检验的唯一口径** |
-| **ExtendedPool** | StrongPool + KNN + AdaBoost | `stacking_fair_pool.py` | 弱模型进入池后的鲁棒性诊断；结论与 StrongPool 同方向 |
-| **探索池（含 KNN）** | RF + GBM + KNN + BayesianRidge + SVR | `stacking_comparison.py`、`baselines_ext.py` | Holdout vs OOF **策略机制**对照；**不作为 §4.4 主结论** |
-| **混合池** | RF + SVR + CNN + LSTM + Transformer | `ensemble.py` | 说明"换 pool 可改变 stacking 上限"（MAE 49.59 W）；与 StrongPool 公平比较不可直接并列 |
+| **StrongPool** | RF + GBM + BayesianRidge + SVR | `stacking/stacking_fair_pool.py` | **§4.4 主表与统计检验的唯一口径** |
+| **ExtendedPool** | StrongPool + KNN + AdaBoost | `stacking/stacking_fair_pool.py` | 弱模型进入池后的鲁棒性诊断；结论与 StrongPool 同方向 |
+| **探索池（含 KNN）** | RF + GBM + KNN + BayesianRidge + SVR | `stacking/stacking_comparison.py`、`prediction/baselines_ext.py` | Holdout vs OOF **策略机制**对照；**不作为 §4.4 主结论** |
+| **混合池** | RF + SVR + CNN + LSTM + Transformer | `prediction/ensemble.py` | 说明"换 pool 可改变 stacking 上限"（MAE 49.59 W）；与 StrongPool 公平比较不可直接并列 |
 
 **为何 Pool 会影响 OOF 数字？** 二层学习器为每个基模型学一列权重（如 \(w_{RF}, w_{GBM}, \ldots\)）。若池中纳入 **KNN**（§4.1 中 MAE≈82 W）或 **AdaBoost**（MAE≈187 W），其 OOF 折外预测在时序早期折上更不稳定，会拉高 meta 特征噪声，二层需要额外容量去抑制弱列，OOF 失败会被放大。StrongPool 只保留第一梯队附近模型，是为了在**固定 pool** 的前提下比较 Holdout 与 OOF 两种 meta-feature 策略。
 
@@ -423,7 +422,7 @@ Stacking 的数值**必须连同"基模型池（Pool）""meta-feature 怎么生�
 
 | 对比项 | §4.4 公平 OOF（正文主数字） | 探索 OOF（Slides / 机制示意） |
 |--------|------------------------------|------------------------------|
-| 脚本 | `stacking_fair_pool.py` | `stacking_comparison.py` |
+| 脚本 | `stacking/stacking_fair_pool.py` | `stacking/stacking_comparison.py` |
 | 基模型池 | **StrongPool**（4 模型） | **探索池**（含 **KNN**） |
 | OOF + RidgeCV 测试 MAE | **60.52 W** | **175.94 W** |
 | Holdout 对照 MAE | **51.31 W**（ElasticNetCV） | **52.59–53.11 W**（Lasso/Ridge） |
@@ -431,19 +430,33 @@ Stacking 的数值**必须连同"基模型池（Pool）""meta-feature 怎么生�
 
 **共同结论**：在本月非平稳时序数据上，**OOF stacking 均弱于 Holdout**，且 **MAE 均未稳定超过 SVR（48.88 W）**。探索实验中 OOF 与 Holdout 的差距更大（约 **120 W**），适合在 Slides 中说明"为何不用标准 OOF"；正文 §4.4 采用修正后的公平协议，OOF 与 Holdout 差距约 **9 W**，更适合写进正式结果表与 Bootstrap / 配对检验。
 
-除 StrongPool 外，我也尝试过不同的基模型池。例如 `ensemble.py` 的混合池 **RF + SVR + CNN + LSTM + Transformer → RidgeCV** 可以得到 MAE **49.59 W**、RMSE **79.05 W**，说明合适的 pool 选择确实可能改善集成结果。不过该实验同时改变了基模型池和二层训练设置，不能单独说明“哪一种 stacking 策略更优”。因此报告主结论采用统一 StrongPool 的公平比较，而把混合池结果作为说明“pool 选择会影响 stacking 上限”的补充证据。
+除 StrongPool 外，我也尝试过不同的基模型池。例如 `prediction/ensemble.py` 的混合池 **RF + SVR + CNN + LSTM + Transformer → RidgeCV** 可以得到 MAE **49.59 W**、RMSE **79.05 W**，说明合适的 pool 选择确实可能改善集成结果。不过该实验同时改变了基模型池和二层训练设置，不能单独说明“哪一种 stacking 策略更优”。因此报告主结论采用统一 StrongPool 的公平比较，而把混合池结果作为说明“pool 选择会影响 stacking 上限”的补充证据。
 
 ---
 
 ### 4.5 预测曲线与可视化
 
-统一评估脚本生成了主测试集误差对比与片段预测曲线。SVR 与 RF 对整体趋势跟踪较好；深度单模型误差偏大。公平 stacking 的定量比较以 §4.4 的统一 StrongPool 表格和配图为准。
+本节展示**预测层主实验**（`prediction/ensemble.py` 混合池 + `prediction/final_evaluation.py` 统一读表）在测试集上的可视化，与 §4.1–§4.3 数值表对应。公平 StrongPool stacking 的柱状对比见 §4.4 图 4-1；此处聚焦 ensemble 主链路各模型的全局误差与局部跟踪效果。
 
-主测试集误差对比
+**生成方式**：在已有预测 CSV（`output_ot_full_temp_wind/wind_model_output_with_OT_predictions_and_ensembles.csv`）的前提下运行：
 
-测试集片段预测曲线
+```bash
+python3 prediction/final_evaluation.py
+# → final_results/main_error_comparison.png
+# → final_results/prediction_excerpt.png
+```
 
-第二张图使用测试集中的连续片段而不是完整测试集，是出于可读性考虑：完整测试集约 8,349 个分钟级点，若全部画在一张图中，不同模型曲线会严重重叠，局部峰值、突变和模型间差异反而难以观察。完整测试集的信息已经通过 MAE/RMSE/R² 和第一张误差对比图体现；片段曲线则用于展示模型在局部时间窗口内对趋势、峰值和突变的跟踪能力。因此，报告采用“全局指标 + 局部曲线”的组合，而不是把全部时序点压缩进一张不可读的图。
+#### 4.5.1 主测试集误差对比（全局）
+
+![主测试集 MAE/RMSE 对比](final_results/main_error_comparison.png)
+
+可以看出，Stacking 的 **RMSE 柱**略低于 SVR/RF，与 §4.4 中“二层融合主要缓解大误差”的叙述一致；**MAE 柱**则 SVR 最低，说明平均绝对误差上最佳单模型仍占优。
+
+#### 4.5.2 测试集片段预测曲线（局部）
+
+![测试集片段预测曲线](final_results/prediction_excerpt.png)
+
+该图使用连续片段而非完整 8,349 点，是出于可读性考虑：全量曲线严重重叠，局部峰值、突变和模型间差异难以辨认。完整测试集信息已由 MAE/RMSE/R²（§4.1–§4.3）和图 4-2 体现；片段曲线用于直观展示：**SVR 与 RF 对趋势和峰值的跟踪较紧**，Stacking 曲线与二者接近；深度单模型未列入该图（误差过大，会压缩纵轴可读性）。
 
 ---
 
@@ -485,7 +498,7 @@ RF/GBM 的 CV MAE 高于测试 MAE，主要因为 expanding-window 早期折训�
 
 #### 4.6.3 Bootstrap 置信区间
 
-Bootstrap 在测试集上做 B=2000 次有放回重采样，估计 MAE/RMSE 的 95% 置信区间。公平集成结果来自 `stacking_fair_pool.py`：
+Bootstrap 在测试集上做 B=2000 次有放回重采样，估计 MAE/RMSE 的 95% 置信区间。公平集成结果来自 `stacking/stacking_fair_pool.py`：
 
 
 | 模型                   | MAE   | 95% CI         | RMSE   | 95% CI           |
@@ -516,7 +529,7 @@ Bootstrap 在测试集上做 B=2000 次有放回重采样，估计 MAE/RMSE 的 
 
 | 项目          | 设定                                                                                                |
 | ----------- | ------------------------------------------------------------------------------------------------- |
-| **代表性模型**   | **CNN-LSTM-Attention**（`train_cnn_lstm.py` 训练；权重 `out_cnn_lstm_cluster_1/model_run0_cluster0.pt`） |
+| **代表性模型**   | **CNN-LSTM-Attention**（`sequence/train_cnn_lstm.py` 训练；权重 `out_cnn_lstm_cluster_1/model_run0_cluster0.pt`） |
 | **用于聚类的表示** | 测试集每条样本的 **128 维 penultimate embedding**（及可选的 1 维 `OT_pred`）                                      |
 | **聚类算法**    | 默认 **KMeans(k=2)**；§5.3–§5.4 在**同一 embedding** 上对比层次聚类 / K-Medoids                                |
 
@@ -526,7 +539,7 @@ Bootstrap 在测试集上做 B=2000 次有放回重采样，估计 MAE/RMSE 的 
 1. **任务对齐**：该模型是 **预测 MAE 最优深度结构之一**（CNN_LSTM / CNN_LSTM-Attention，§4.3），且为课题主线的 **双任务（预测 + 表征）** 实现，其 embedding 专为 `OT` 时序与工况变化训练，比随机特征或弱模型 embedding 更具信息量。
 2. **表征质量可验证**：相对 OT-KMeans 参照分群 ARI≈0.82（§5.2.2）；在**统一停机基线**上 embedding KMeans 达 Accuracy **94.67%**，**预测值聚类**为 93.96%，说明 embedding 更适于决策层聚类——若换用弱 CNN 单模块（MAE≈258 W），工况结构噪声更大，聚类结论不再稳定。
 3. **算法对照在同一表示上**：§5.3、§5.4 不改变基础模型，只改变聚类器（KMeans / Ward / PAM）。若多种聚类器在**同一 embedding** 上给出相近 ARI（或相对参考分群一致），则结论反映**数据结构**而非某一聚类实现的偶然性。
-4. **不声称跨模型普适**：未对 `ensemble.py` 的 CNN/LSTM/Transformer embedding 逐一做聚类普查；代表性模型选取基于**课题主线 + 预测性能 + 下游停机评测（94.67%）**，在报告中应表述为"在主推深度模型上的工况结构分析"，而非"所有模型的普适结论"。
+4. **不声称跨模型普适**：未对 `prediction/ensemble.py` 的 CNN/LSTM/Transformer embedding 逐一做聚类普查；代表性模型选取基于**课题主线 + 预测性能 + 下游停机评测（94.67%）**，在报告中应表述为"在主推深度模型上的工况结构分析"，而非"所有模型的普适结论"。
 
 #### 5.1.3 标签与指标（统一基线）
 
@@ -538,7 +551,7 @@ Bootstrap 在测试集上做 B=2000 次有放回重采样，估计 MAE/RMSE 的 
 
 停机阈值 1000 kW 的依据见 **§3.6.9.0**（测试集 OT KMeans 二分中点 ≈1115 W，与 1000 kW 标签一致率 96.4%；电机系老师认可其作为低出力代理评测的合理性）。
 
-本节在 embedding 上运行 KMeans(k=2)，再用簇内多数投票映射停机标签，以 `OT_true < 1000 kW` 为 ground truth。以下 **Accuracy / F1 均在同一基线上** 由 `cluster_unified_eval.py` 汇总（N=8347）。
+本节在 embedding 上运行 KMeans(k=2)，再用簇内多数投票映射停机标签，以 `OT_true < 1000 kW` 为 ground truth。以下 **Accuracy / F1 均在同一基线上** 由 `clustering/cluster_unified_eval.py` 汇总（N=8347）。
 
 #### 5.2.1 主结果表
 
@@ -609,7 +622,7 @@ K=3 时三簇沿 `OT` 由高到低梯度分布，应停机比例约 40.6% / 62.6
 
 **方法适用性**：K-Medoids（PAM，Partitioning Around Medoids）是 KMeans 的变体，聚类中心从"均值（可能是空间中不存在的虚点）"改为"实际数据点中使总内部距离最小的 medoid"。其核心优势有三：① 对离群点鲁棒（极端值只能参与投票，不会拉偏均值）；② 中心可直接溯源为真实样本；③ 可使用任意距离度量而非只有欧氏距离。
 
-本文手写 PAM 实现（`cluster_kmedoids.py`），对 PCA-10 压缩后的 embedding 和 1D 预测值分别运行 KMeans 与 K-Medoids，并设计离群点鲁棒性实验。
+本文手写 PAM 实现（`clustering/cluster_kmedoids.py`），对 PCA-10 压缩后的 embedding 和 1D 预测值分别运行 KMeans 与 K-Medoids，并设计离群点鲁棒性实验。
 
 **实验 A — 正常数据（Embedding PCA-10）**：
 
@@ -640,7 +653,7 @@ K=3 时三簇沿 `OT` 由高到低梯度分布，应停机比例约 40.6% / 62.6
 | K-Medoids | -5.3W（真实预测）；1579W | 89.48%    | 87.96% | 0.623            |
 
 
-本表的 Accuracy/F1 来自 `cluster_kmedoids.py` 的匈牙利对齐评测，参照对象是 `OT_true` 上的 KMeans 二分（OT-KMeans），不是 §5.2 的 `OT < 1000 kW` 停机基线。因此它只用于比较 KMeans 与 K-Medoids 在同一 1D prediction 特征上的聚类一致性，不作为主停机决策准确率。
+本表的 Accuracy/F1 来自 `clustering/cluster_kmedoids.py` 的匈牙利对齐评测，参照对象是 `OT_true` 上的 KMeans 二分（OT-KMeans），不是 §5.2 的 `OT < 1000 kW` 停机基线。因此它只用于比较 KMeans 与 K-Medoids 在同一 1D prediction 特征上的聚类一致性，不作为主停机决策准确率。
 
 **分析**：
 
@@ -683,7 +696,7 @@ BIC 最优 K=4（BIC 下降显著），说明在纯似然-参数惩罚口径下 
 
 K=2 时两个状态的 OT 差异极大（290W vs 2019W），但**温度几乎相同**（-11.3°C vs -11.0°C）。这揭示了数据的一个关键特性：2024 年 2 月整月都处于极寒期，环境温度变化范围极窄，HMM 主要靠 OT 而非温度区分工况。
 
-**K=3 退化问题**（状态 0 ≈ 状态 1）：
+**K=3 退化**（状态 0 ≈ 状态 1）：
 
 K=3 时，HMM 将状态 0（OT=1062W，Temp=-14.3°C）和状态 1（OT=1062W，Temp=-14.3°C）的均值几乎完全一致，说明模型在这个维度上退化到局部最优，分不出有意义的第三个状态。K=3 的 BIC 反而比 K=2 更差，也印证了"强行三聚类"对本数据不自然。
 
@@ -711,13 +724,6 @@ K=3 时，HMM 将状态 0（OT=1062W，Temp=-14.3°C）和状态 1（OT=1062W，
 
 
 ARI 和 NMI 均在 0.2–0.4 之间，属于**中等一致**。差异的来源正是方法本质的不同：KMeans 按欧氏距离将 (OT, Temp) 空间割分成 Voronoi 区域（不考虑时序），HMM 利用转移矩阵在时间轴上施加平滑约束，将短暂波动归到当前持续状态而不是立即切换。
-
-**主要发现与课程知识点对照**：
-
-1. **Viterbi 解码**（A15）：`GaussianHMM.predict()` 内部使用 Viterbi 算法求最优隐状态序列，是 HMM 的核心推断算法。
-2. **EM（Baum-Welch）训练**（A14）：`fit()` 使用 Forward-Backward + M-step 估计 A、均值和协方差，等价于带隐变量的最大似然估计（EM 算法特例）。
-3. **模型选择（BIC）**：BIC 在 log-likelihood 上加参数惩罚，本实验中 K=4 的 log-likelihood 跳跃远大于参数增加带来的惩罚，BIC 选出 K=4。
-4. **数据局限性的诊断能力**：K=3 退化、温度通道几乎不起作用——这些反直觉结果本身就是有价值的分析，说明在单月冬季数据上，仅用 (OT, 温度) 双观测不足以稳定分辨 3 个以上的工况，需要补充更多气象变量（如风速、湿度）或使用更长时间段的数据。
 
 ## 6. 总结与反思
 
@@ -768,44 +774,44 @@ HMM 对应隐变量模型、EM 训练和 Viterbi 解码（A14/A15）。在本实
 
 | 脚本                          | 功能                                                | 相关知识点                  |
 | --------------------------- | ------------------------------------------------- | ---------------------- |
-| `ensemble.py`               | 混合池探索实验（RF/SVR/CNN/LSTM/Transformer → RidgeCV）    | A1/A10/A11/A12/A16/A19 |
-| `baselines_ext.py`          | 补充传统基线（GBM/AdaBoost/KNN/BayesianRidge）            | A13/A3/A2/T1           |
-| `train_cnn_lstm.py`         | CNN-LSTM-Attention 训练与工况划分                        | A19/深度学习               |
-| `cnn_lstm_grid_search.py`   | CNN-LSTM 超参网格搜索                                   | E1/E2                  |
-| `embedding_analysis.py`     | 提取 embedding → KMeans 一致性分析                       | A5                     |
-| `cluster_agglomerative.py`  | AgglomerativeClustering vs KMeans 对比              | A8                     |
-| `cluster_kmedoids.py`       | 手写 PAM K-Medoids 对比实验                             | A6                     |
-| `bootstrap_cv_eval.py`      | 显式 TimeSeriesSplit k-fold CV + Bootstrap 置信区间     | E2/E3/T2               |
-| `cluster_eval.py`           | 停机基线（OT<1000 kW）聚类二分类评估                           | —                      |
-| `ot_threshold_rationale.py` | 验证 1000 kW 与 OT KMeans 二分边界的一致性（§3.6.9.0）         | A5                     |
-| `cluster_unified_eval.py`   | 各聚类方法在**同一停机基线**上的 Accuracy/F1 汇总                 | —                      |
-| `final_evaluation.py`       | 最终评估（读预测文件，生成报告表格和配对检验）                           | E4/T2                  |
-| `paper_protocol_eval.py`    | 序列结构扩展实验汇总与 RF/SVR 对照评估                           | E4                     |
-| `stacking_fair_pool.py`     | 统一 StrongPool 下比较 Holdout/OOF stacking、NNLS 与置信区间（§4.4 主结论） | A10/A1/E2/T2           |
-| `stacking_comparison.py`    | 探索池 Holdout vs OOF（OOF MAE≈176 W，Slides 机制对照，§4.4.1）   | A10                    |
-| `oof_meta_shift_analysis.py`| OOF meta 分布偏移定量分析与"仅后 20% OOF"消融（§4.4.1）          | A10/E2                 |
-| `model.py`                  | 基础模型单独对比脚本                                        | —                      |
+| `prediction/ensemble.py`               | 混合池探索实验（RF/SVR/CNN/LSTM/Transformer → RidgeCV）    | A1/A10/A11/A12/A16/A19 |
+| `prediction/baselines_ext.py`          | 补充传统基线（GBM/AdaBoost/KNN/BayesianRidge）            | A13/A3/A2/T1           |
+| `sequence/train_cnn_lstm.py`         | CNN-LSTM-Attention 训练与工况划分                        | A19/深度学习               |
+| `sequence/cnn_lstm_grid_search.py`   | CNN-LSTM 超参网格搜索                                   | E1/E2                  |
+| `clustering/embedding_analysis.py`     | 提取 embedding → KMeans 一致性分析                       | A5                     |
+| `clustering/cluster_agglomerative.py`  | AgglomerativeClustering vs KMeans 对比              | A8                     |
+| `clustering/cluster_kmedoids.py`       | 手写 PAM K-Medoids 对比实验                             | A6                     |
+| `validation/bootstrap_cv_eval.py`      | 显式 TimeSeriesSplit k-fold CV + Bootstrap 置信区间     | E2/E3/T2               |
+| `clustering/cluster_eval.py`           | 停机基线（OT<1000 kW）聚类二分类评估                           | —                      |
+| `clustering/ot_threshold_rationale.py` | 验证 1000 kW 与 OT KMeans 二分边界的一致性（§3.6.9.0）         | A5                     |
+| `clustering/cluster_unified_eval.py`   | 各聚类方法在**同一停机基线**上的 Accuracy/F1 汇总                 | —                      |
+| `prediction/final_evaluation.py`       | 最终评估（读预测文件，生成报告表格和配对检验）                           | E4/T2                  |
+| `validation/paper_protocol_eval.py`    | 序列结构扩展实验汇总与 RF/SVR 对照评估                           | E4                     |
+| `stacking/stacking_fair_pool.py`     | 统一 StrongPool 下比较 Holdout/OOF stacking、NNLS 与置信区间（§4.4 主结论） | A10/A1/E2/T2           |
+| `stacking/stacking_comparison.py`    | 探索池 Holdout vs OOF（OOF MAE≈176 W，Slides 机制对照，§4.4.1）   | A10                    |
+| `stacking/oof_meta_shift_analysis.py`| OOF meta 分布偏移定量分析与"仅后 20% OOF"消融（§4.4.1）          | A10/E2                 |
+| `prediction/model.py`                  | 基础模型单独对比脚本                                        | —                      |
 
 
 推荐复现实验顺序：
 
 ```bash
-python ensemble.py
-python baselines_ext.py
-python stacking_fair_pool.py
-python final_evaluation.py
+python prediction/ensemble.py
+python prediction/baselines_ext.py
+python stacking/stacking_fair_pool.py
+python prediction/final_evaluation.py
 ```
 
 若只想复现预测层最终表格，可以直接运行：
 
 ```bash
-python final_evaluation.py
+python prediction/final_evaluation.py
 ```
 
 若只想复现 §4.4 与 §4.6 中的公平集成、Bootstrap CI 和配对检验，可以直接运行：
 
 ```bash
-python stacking_fair_pool.py
+python stacking/stacking_fair_pool.py
 ```
 
 输出文件位于 `final_results/`：
